@@ -1,3 +1,5 @@
 *.old
 *.out
 states/
+*.dvi
+*.tex

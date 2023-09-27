@@ -21,7 +21,7 @@ One solution would be to use atomic commit, and check at the end if the lease is
 This specification models the above algorithm to expose the concurrency bug.
 
 The available states are:
-* WaitingForLease - Initial. When th process doesn't own a lock.
+* WaitingForLease - Initial. When the process doesn't own a lock.
 * RenewedLease - maps to line 3.
 * DoingOperation - maps to line 4. 
 * Sleep - maps to the concept of sleep and expired lease.

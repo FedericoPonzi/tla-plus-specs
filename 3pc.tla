@@ -21,6 +21,11 @@ DoCommit Phase:
 
 The Three-Phase Commit Protocol aims to strike a balance between the blocking nature of the Two-Phase Commit Protocol (where participants can be stuck indefinitely waiting for a decision) and the lack of fault tolerance in the One-Phase Commit Protocol. However, it is worth noting that 3PC does not completely eliminate all possible issues in distributed transactions, and it may still suffer from some of the same problems as 2PC in certain scenarios, such as network failures or coordinator failures.
 
+3pc achieves liveness as it can commit in the event of failures as it can just timeout and retry, but it fails on correctness for async networks with a single network delayed TC or RM (network partition).
+
+
+
+
 ------------------- MODULE 3pc ----------------
 EXTENDS Integers, TLC
 
@@ -45,7 +50,7 @@ RmPossibleStates == {StateInitial, StateAcceptedCanCommit, StateAborted, StatePr
 
 baitinv == TLCGet("level") < 9
 
-(* --algorithm 3pc {
+(* --fair algorithm 3pc {
     variables rmStates = [rm \in ResourceManagers |-> StateInitial], 
               tmState = StateInitial,
               proposedValue = -1;
@@ -58,12 +63,12 @@ baitinv == TLCGet("level") < 9
                         ~ \E rm2 \in ResourceManagers : rmStates[rm2] \in {StateAborted}
                 \*/\ baitinv
         chosen == {v \in Values: \A rm \in ResourceManagers: rmStates[rm] = StateCommitted /\ proposedValue = v}
-        Terminate ==  <>[] \A rm \in ResourceManagers: rmStates[rm] \in {StateCommitted} /\ tmState = StateCommitted
+        Terminate ==  <>[] \A rm \in ResourceManagers: rmStates[rm] = tmState
     }
 
 fair process (TransactionManager = 0) {
 TM: 
-    while(~ tmState \in {StateCommitted}){
+    while(tmState \notin {StateCommitted, StateAborted}){
         either{
             await tmState = StateInitial; 
             with (value \in Values) {
@@ -71,48 +76,52 @@ TM:
                 tmState := StateCanCommit;
             }
         } or {
-            await \E rm \in ResourceManagers: rmStates[rm] \in {StateAborted};
-            tmState := StateInitial;
+            await \E rm \in ResourceManagers: 
+                    rmStates[rm] = StateAborted;
+TM_AB:            tmState := StateAborted;
         } or {
             await tmState = StateCanCommit /\ \A rm \in ResourceManagers : rmStates[rm] = StateAcceptedCanCommit;
-            tmState := StatePrecommit;
+TM_PRE:            tmState := StatePrecommit;
         } or {
             await tmState = StatePrecommit /\ \A rm \in ResourceManagers : rmStates[rm] = StatePrecommitted;
-            tmState := StateDoCommit;
+TM_DOC:            tmState := StateDoCommit;
         } or {
             await tmState = StateDoCommit /\ \A rm \in ResourceManagers : rmStates[rm] = StateCommitted;
-            tmState := StateCommitted;
+TM_COM:            tmState := StateCommitted;
         }
     }
 }
 fair process (rm \in ResourceManagers) {
 RM: 
-    while(~rmStates[self] \in {StateCommitted}){
+    while(rmStates[self] \notin {StateCommitted, StateAborted}){
         either {
             await rmStates[self] = StateInitial /\ tmState = StateCanCommit;
-            \*either {
+RM_CAN:            either {
                 rmStates[self] := StateAcceptedCanCommit; 
-            \*} or {
-            \*    rmStates[self] := StateAborted;
-            \*}
+            } or {
+                rmStates[self] := StateAborted;
+            }
         } or {
             await rmStates[self] = StateAcceptedCanCommit /\ tmState = StatePrecommit;
-            \*either {
+RM_PRE:            either {
                 rmStates[self] := StatePrecommitted;
-            \*} or {
-            \*    rmStates[self] := StateAborted;
-            \*}
+            } or {
+                rmStates[self] := StateAborted;
+            }
         } or {
             await /\ rmStates[self] = StatePrecommitted
                   /\ tmState = StateDoCommit;
-            rmStates[self] := StateCommitted;
-        }
+RM_COM:           rmStates[self] := StateCommitted;
+        } or {
+            await tmState = StateAborted;
+RM_INI:            rmStates[self] := StateAborted;
+        } 
     }
 }
 
 }
 *)
-\* BEGIN TRANSLATION (chksum(pcal) = "bb7e3bb2" /\ chksum(tla) = "bf99caed")
+\* BEGIN TRANSLATION (chksum(pcal) = "7c28162a" /\ chksum(tla) = "b56d638")
 VARIABLES rmStates, tmState, proposedValue, pc
 
 (* define statement *)
@@ -124,7 +133,7 @@ Inv ==  /\ \E rm1 \in ResourceManagers: rmStates[rm1] \in {StateCommitted} =>
                 ~ \E rm2 \in ResourceManagers : rmStates[rm2] \in {StateAborted}
 
 chosen == {v \in Values: \A rm \in ResourceManagers: rmStates[rm] = StateCommitted /\ proposedValue = v}
-Terminate ==  <>[] \A rm \in ResourceManagers: rmStates[rm] \in {StateCommitted} /\ tmState = StateCommitted
+Terminate ==  <>[] \A rm \in ResourceManagers: rmStates[rm] = tmState
 
 
 vars == << rmStates, tmState, proposedValue, pc >>
@@ -139,45 +148,89 @@ Init == (* Global variables *)
                                         [] self \in ResourceManagers -> "RM"]
 
 TM == /\ pc[0] = "TM"
-      /\ IF ~ tmState \in {StateCommitted}
+      /\ IF tmState \notin {StateCommitted, StateAborted}
             THEN /\ \/ /\ tmState = StateInitial
                        /\ \E value \in Values:
                             /\ proposedValue' = value
                             /\ tmState' = StateCanCommit
-                    \/ /\ \E rm \in ResourceManagers: rmStates[rm] \in {StateAborted}
-                       /\ tmState' = StateInitial
-                       /\ UNCHANGED proposedValue
+                       /\ pc' = [pc EXCEPT ![0] = "TM"]
+                    \/ /\ \E rm \in ResourceManagers:
+                            rmStates[rm] = StateAborted
+                       /\ pc' = [pc EXCEPT ![0] = "TM_AB"]
+                       /\ UNCHANGED <<tmState, proposedValue>>
                     \/ /\ tmState = StateCanCommit /\ \A rm \in ResourceManagers : rmStates[rm] = StateAcceptedCanCommit
-                       /\ tmState' = StatePrecommit
-                       /\ UNCHANGED proposedValue
+                       /\ pc' = [pc EXCEPT ![0] = "TM_PRE"]
+                       /\ UNCHANGED <<tmState, proposedValue>>
                     \/ /\ tmState = StatePrecommit /\ \A rm \in ResourceManagers : rmStates[rm] = StatePrecommitted
-                       /\ tmState' = StateDoCommit
-                       /\ UNCHANGED proposedValue
+                       /\ pc' = [pc EXCEPT ![0] = "TM_DOC"]
+                       /\ UNCHANGED <<tmState, proposedValue>>
                     \/ /\ tmState = StateDoCommit /\ \A rm \in ResourceManagers : rmStates[rm] = StateCommitted
-                       /\ tmState' = StateCommitted
-                       /\ UNCHANGED proposedValue
-                 /\ pc' = [pc EXCEPT ![0] = "TM"]
+                       /\ pc' = [pc EXCEPT ![0] = "TM_COM"]
+                       /\ UNCHANGED <<tmState, proposedValue>>
             ELSE /\ pc' = [pc EXCEPT ![0] = "Done"]
                  /\ UNCHANGED << tmState, proposedValue >>
       /\ UNCHANGED rmStates
 
-TransactionManager == TM
+TM_AB == /\ pc[0] = "TM_AB"
+         /\ tmState' = StateAborted
+         /\ pc' = [pc EXCEPT ![0] = "TM"]
+         /\ UNCHANGED << rmStates, proposedValue >>
+
+TM_PRE == /\ pc[0] = "TM_PRE"
+          /\ tmState' = StatePrecommit
+          /\ pc' = [pc EXCEPT ![0] = "TM"]
+          /\ UNCHANGED << rmStates, proposedValue >>
+
+TM_DOC == /\ pc[0] = "TM_DOC"
+          /\ tmState' = StateDoCommit
+          /\ pc' = [pc EXCEPT ![0] = "TM"]
+          /\ UNCHANGED << rmStates, proposedValue >>
+
+TM_COM == /\ pc[0] = "TM_COM"
+          /\ tmState' = StateCommitted
+          /\ pc' = [pc EXCEPT ![0] = "TM"]
+          /\ UNCHANGED << rmStates, proposedValue >>
+
+TransactionManager == TM \/ TM_AB \/ TM_PRE \/ TM_DOC \/ TM_COM
 
 RM(self) == /\ pc[self] = "RM"
-            /\ IF ~rmStates[self] \in {StateCommitted}
+            /\ IF rmStates[self] \notin {StateCommitted, StateAborted}
                   THEN /\ \/ /\ rmStates[self] = StateInitial /\ tmState = StateCanCommit
-                             /\ rmStates' = [rmStates EXCEPT ![self] = StateAcceptedCanCommit]
+                             /\ pc' = [pc EXCEPT ![self] = "RM_CAN"]
                           \/ /\ rmStates[self] = StateAcceptedCanCommit /\ tmState = StatePrecommit
-                             /\ rmStates' = [rmStates EXCEPT ![self] = StatePrecommitted]
+                             /\ pc' = [pc EXCEPT ![self] = "RM_PRE"]
                           \/ /\ /\ rmStates[self] = StatePrecommitted
                                 /\ tmState = StateDoCommit
-                             /\ rmStates' = [rmStates EXCEPT ![self] = StateCommitted]
-                       /\ pc' = [pc EXCEPT ![self] = "RM"]
+                             /\ pc' = [pc EXCEPT ![self] = "RM_COM"]
+                          \/ /\ tmState = StateAborted
+                             /\ pc' = [pc EXCEPT ![self] = "RM_INI"]
                   ELSE /\ pc' = [pc EXCEPT ![self] = "Done"]
-                       /\ UNCHANGED rmStates
-            /\ UNCHANGED << tmState, proposedValue >>
+            /\ UNCHANGED << rmStates, tmState, proposedValue >>
 
-rm(self) == RM(self)
+RM_CAN(self) == /\ pc[self] = "RM_CAN"
+                /\ \/ /\ rmStates' = [rmStates EXCEPT ![self] = StateAcceptedCanCommit]
+                   \/ /\ rmStates' = [rmStates EXCEPT ![self] = StateAborted]
+                /\ pc' = [pc EXCEPT ![self] = "RM"]
+                /\ UNCHANGED << tmState, proposedValue >>
+
+RM_PRE(self) == /\ pc[self] = "RM_PRE"
+                /\ \/ /\ rmStates' = [rmStates EXCEPT ![self] = StatePrecommitted]
+                   \/ /\ rmStates' = [rmStates EXCEPT ![self] = StateAborted]
+                /\ pc' = [pc EXCEPT ![self] = "RM"]
+                /\ UNCHANGED << tmState, proposedValue >>
+
+RM_COM(self) == /\ pc[self] = "RM_COM"
+                /\ rmStates' = [rmStates EXCEPT ![self] = StateCommitted]
+                /\ pc' = [pc EXCEPT ![self] = "RM"]
+                /\ UNCHANGED << tmState, proposedValue >>
+
+RM_INI(self) == /\ pc[self] = "RM_INI"
+                /\ rmStates' = [rmStates EXCEPT ![self] = StateAborted]
+                /\ pc' = [pc EXCEPT ![self] = "RM"]
+                /\ UNCHANGED << tmState, proposedValue >>
+
+rm(self) == RM(self) \/ RM_CAN(self) \/ RM_PRE(self) \/ RM_COM(self)
+               \/ RM_INI(self)
 
 (* Allow infinite stuttering to prevent deadlock on termination. *)
 Terminating == /\ \A self \in ProcSet: pc[self] = "Done"
@@ -188,6 +241,7 @@ Next == TransactionManager
            \/ Terminating
 
 Spec == /\ Init /\ [][Next]_vars
+        /\ WF_vars(Next)
         /\ WF_vars(TransactionManager)
         /\ \A self \in ResourceManagers : WF_vars(rm(self))
 

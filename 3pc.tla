@@ -10,10 +10,11 @@ correctness for async networks with a single network delayed TC or RM (network p
 Running this spec with NetworkPartitions = TRUE leads to a stack trace in which one RM goes to Committed and the other 
 one along with TM go to AbortedTransaction.
 
+
 Resources:
 * https://www.cs.columbia.edu/~du/ds/assets/lectures/lecture17.pdf
 * http://muratbuffalo.blogspot.com/2018/12/2-phase-commit-and-beyond.html
-
+* Diagram: https://en.wikipedia.org/wiki/File:Three-phase_commit_diagram.svg
 
 ------------------- MODULE 3pc ----------------
 EXTENDS Integers, FiniteSets, TLC
@@ -38,7 +39,7 @@ StatePartitioned == "NetworkPartitions"
 
 TmPossibleStates == {StateInitial, StateCanCommit, StateAborted, StatePrecommit, StateDoCommit, StateCommitted, StatePartitioned}
 RmPossibleStates == {StateInitial, StateAcceptedCanCommit, StateAborted, StatePrecommitted, StateCommitted, StatePartitioned}
-EndStates == {StateCommitted, StateAborted}
+TerminalStates == {StateCommitted, StateAborted}
 
 baitinv == TLCGet("level") < 29
 
@@ -48,21 +49,28 @@ baitinv == TLCGet("level") < 29
               tmState = StateInitial,
               proposedValue = -1;
     define {
-        TypeOk == /\ \A rm \in ResourceManagers: rmStates[rm] \in RmPossibleStates
+        AllRmInState(s) == \A rm \in ResourceManagers : rmStates[rm] \in s
+
+        CanPreCommit == tmState = StateCanCommit /\ AllRmInState({StateAcceptedCanCommit})
+        CanCommit == tmState = StatePrecommit /\ AllRmInState({StatePrecommitted, StateCommitted})
+        CanCompleteTransaction == tmState = StateDoCommit /\ AllRmInState({StateCommitted})
+
+        TypeOk == /\ AllRmInState(RmPossibleStates)
                   /\ tmState \in TmPossibleStates
                   /\ proposedValue \in Values \union {-1}
         
+        \* If any rm ends in aborted state, no rm should commit.
         Inv ==  \A rm1 \in ResourceManagers: rmStates[rm1] = StateAborted =>
                     ~\E rm2 \in ResourceManagers: rmStates[rm2] = StateCommitted
         chosen == {v \in Values: \A rm \in ResourceManagers: rmStates[rm] = StateCommitted /\ proposedValue = v}
-        Terminate ==  <>[] /\ \A rm \in ResourceManagers: rmStates[rm] \in EndStates
-                           /\ tmState \in EndStates
+        Terminate ==  <>[] /\ \A rm \in ResourceManagers: rmStates[rm] \in TerminalStates
+                           /\ tmState \in TerminalStates
     }
 
 fair process (TransactionManager = 0) 
 variable pre = ""; {
 TM: 
-    while(tmState \notin {StateCommitted, StateAborted}){
+    while(tmState \notin TerminalStates){
         either{
             await tmState = StateInitial; 
             with (value \in Values) {
@@ -70,25 +78,33 @@ TM:
                 tmState := StateCanCommit;
             }
         } or {
-            await \E rm \in ResourceManagers: 
-                    rmStates[rm] = StateAborted;
-TM_AB:            tmState := StateAborted;
+            \* Abort the whole transaction if at any point any RM aborted it
+            await \E rm \in ResourceManagers: rmStates[rm] = StateAborted;
+TM_AB:      
+            tmState := StateAborted;
         } or {
-            await tmState = StateCanCommit /\ \A rm \in ResourceManagers : rmStates[rm] = StateAcceptedCanCommit;
-TM_PRE:            tmState := StatePrecommit;
+            await CanPreCommit;
+TM_PRE:            
+            tmState := StatePrecommit;
         } or {
-            await tmState = StatePrecommit /\ \A rm \in ResourceManagers : rmStates[rm] \in {StatePrecommitted, StateCommitted};
-TM_DOC:            tmState := StateDoCommit;
+            await CanCommit;
+TM_DOC:            
+            tmState := StateDoCommit;
         } or {
-            await tmState = StateDoCommit /\ \A rm \in ResourceManagers : rmStates[rm] = StateCommitted;
-TM_COM:            tmState := StateCommitted;
+            await CanCompleteTransaction;
+TM_COM:            
+            tmState := StateCommitted;
         } or { 
+           \* This simulates network partitions
+           \* pre is used to avoid keeping track of what the previous state of the rm was
+           \* before network partition
            await NetworkPartitions /\ pre # tmState;
            pre := tmState;
            tmState := StatePartitioned;
-TM_PAR:        tmState := pre;
+TM_PAR: 
+           tmState := pre;
         } or {
-            \* timeout causes abort
+            \* timeout of any RM causes abort from TM side.
             await \E rm \in ResourceManagers : rmStates[rm] = StatePartitioned;
             tmState:= StateAborted;
         }
@@ -97,17 +113,19 @@ TM_PAR:        tmState := pre;
 fair process (rm \in ResourceManagers)   variables pre=""; {
 
 RM: 
-    while(rmStates[self] \notin {StateCommitted, StateAborted}) {
+    while(rmStates[self] \notin TerminalStates) {
         either {
             await rmStates[self] = StateInitial /\ tmState = StateCanCommit;
-RM_CAN:            either {
+RM_CAN:            
+            either {
                 rmStates[self] := StateAcceptedCanCommit; 
             } or {
                 rmStates[self] := StateAborted;
             }
         } or {
             await rmStates[self] = StateAcceptedCanCommit /\ tmState = StatePrecommit;
-RM_PRE:            either {
+RM_PRE:     
+            either {
                 rmStates[self] := StatePrecommitted;
             } or {
                 rmStates[self] := StateAborted;
@@ -120,12 +138,17 @@ RM_COM:
             
         } or {
             await tmState = StateAborted;
-RM_INI:            rmStates[self] := StateAborted;
+RM_INI:     
+            rmStates[self] := StateAborted;
         } or { 
+           \* This simulates network partitions
+           \* pre is used to avoid keeping track of what the previous state of the rm was
+           \* before network partition
            await NetworkPartitions /\ pre#rmStates[self];
            pre := rmStates[self];
            rmStates[self] := StatePartitioned;
-RR:        rmStates[self] := pre;
+RR:
+           rmStates[self] := pre;
         } or {
             await tmState = StatePartitioned /\ rmStates[self] = StateCanCommit;
             rmStates[self] := StateAborted;
@@ -138,20 +161,27 @@ RR:        rmStates[self] := pre;
 
 }
 *)
-\* BEGIN TRANSLATION (chksum(pcal) = "7c28162a" /\ chksum(tla) = "175cddaa")
-\* Process variable pre of process TransactionManager at line 55 col 10 changed to pre_
+\* BEGIN TRANSLATION (chksum(pcal) = "7c28162a" /\ chksum(tla) = "2acf33fc")
+\* Process variable pre of process TransactionManager at line 71 col 10 changed to pre_
 VARIABLES rmStates, tmState, proposedValue, pc
 
 (* define statement *)
-TypeOk == /\ \A rm \in ResourceManagers: rmStates[rm] \in RmPossibleStates
+AllRmInState(s) == \A rm \in ResourceManagers : rmStates[rm] \in s
+
+CanPreCommit == tmState = StateCanCommit /\ AllRmInState({StateAcceptedCanCommit})
+CanCommit == tmState = StatePrecommit /\ AllRmInState({StatePrecommitted, StateCommitted})
+CanCompleteTransaction == tmState = StateDoCommit /\ AllRmInState({StateCommitted})
+
+TypeOk == /\ AllRmInState(RmPossibleStates)
           /\ tmState \in TmPossibleStates
           /\ proposedValue \in Values \union {-1}
+
 
 Inv ==  \A rm1 \in ResourceManagers: rmStates[rm1] = StateAborted =>
             ~\E rm2 \in ResourceManagers: rmStates[rm2] = StateCommitted
 chosen == {v \in Values: \A rm \in ResourceManagers: rmStates[rm] = StateCommitted /\ proposedValue = v}
-Terminate ==  <>[] /\ \A rm \in ResourceManagers: rmStates[rm] \in EndStates
-                   /\ tmState \in EndStates
+Terminate ==  <>[] /\ \A rm \in ResourceManagers: rmStates[rm] \in TerminalStates
+                   /\ tmState \in TerminalStates
 
 VARIABLES pre_, pre
 
@@ -171,24 +201,23 @@ Init == (* Global variables *)
                                         [] self \in ResourceManagers -> "RM"]
 
 TM == /\ pc[0] = "TM"
-      /\ IF tmState \notin {StateCommitted, StateAborted}
+      /\ IF tmState \notin TerminalStates
             THEN /\ \/ /\ tmState = StateInitial
                        /\ \E value \in Values:
                             /\ proposedValue' = value
                             /\ tmState' = StateCanCommit
                        /\ pc' = [pc EXCEPT ![0] = "TM"]
                        /\ pre_' = pre_
-                    \/ /\ \E rm \in ResourceManagers:
-                            rmStates[rm] = StateAborted
+                    \/ /\ \E rm \in ResourceManagers: rmStates[rm] = StateAborted
                        /\ pc' = [pc EXCEPT ![0] = "TM_AB"]
                        /\ UNCHANGED <<tmState, proposedValue, pre_>>
-                    \/ /\ tmState = StateCanCommit /\ \A rm \in ResourceManagers : rmStates[rm] = StateAcceptedCanCommit
+                    \/ /\ CanPreCommit
                        /\ pc' = [pc EXCEPT ![0] = "TM_PRE"]
                        /\ UNCHANGED <<tmState, proposedValue, pre_>>
-                    \/ /\ tmState = StatePrecommit /\ \A rm \in ResourceManagers : rmStates[rm] \in {StatePrecommitted, StateCommitted}
+                    \/ /\ CanCommit
                        /\ pc' = [pc EXCEPT ![0] = "TM_DOC"]
                        /\ UNCHANGED <<tmState, proposedValue, pre_>>
-                    \/ /\ tmState = StateDoCommit /\ \A rm \in ResourceManagers : rmStates[rm] = StateCommitted
+                    \/ /\ CanCompleteTransaction
                        /\ pc' = [pc EXCEPT ![0] = "TM_COM"]
                        /\ UNCHANGED <<tmState, proposedValue, pre_>>
                     \/ /\ NetworkPartitions /\ pre_ # tmState
@@ -232,7 +261,7 @@ TM_PAR == /\ pc[0] = "TM_PAR"
 TransactionManager == TM \/ TM_AB \/ TM_PRE \/ TM_DOC \/ TM_COM \/ TM_PAR
 
 RM(self) == /\ pc[self] = "RM"
-            /\ IF rmStates[self] \notin {StateCommitted, StateAborted}
+            /\ IF rmStates[self] \notin TerminalStates
                   THEN /\ \/ /\ rmStates[self] = StateInitial /\ tmState = StateCanCommit
                              /\ pc' = [pc EXCEPT ![self] = "RM_CAN"]
                              /\ UNCHANGED <<rmStates, pre>>

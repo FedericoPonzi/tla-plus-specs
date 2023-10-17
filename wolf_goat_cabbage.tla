@@ -33,34 +33,30 @@ macro Leave(side) {
     transport := {};
 }
 
-fair process (Farmer = 1) variable transport = {}; temp = {}, source = "";{
+fair process (Farmer = 1) variable transport = {}; temp = {};{
 W:
     while (TRUE){
         either {
-        \* pick an item from side_start and load it.
+            \* pick an item from side_start and load it.
             PickWithEmptyTransport(side_start);
-            source := "start";
         } or {
-           PickWithEmptyTransport(side_end);
-            source := "end";
+            PickWithEmptyTransport(side_end);
         } or {
-            await transport # {} /\ source = "end";
+            await transport # {};
             temp := IF Cardinality(side_start) = 1 THEN {CHOOSE x \in side_start: TRUE} ELSE transport;
             side_start := IF IsValidState(side_start \union transport) THEN side_start \union transport ELSE (side_start \union transport) \ temp;
             transport := IF ~ \A e \in temp: e \in side_start THEN temp ELSE {};
-            source := IF transport = {} THEN "" ELSE "start";
         } or {
             \* leave the item on either coast.
-            await transport # {} /\ source = "start";
+            await transport # {};
             temp := IF Cardinality(side_end) = 1 THEN {CHOOSE x \in side_end: TRUE} ELSE transport;
             side_end := IF IsValidState(side_end \union transport) THEN side_end \union transport ELSE (side_end \union transport) \ temp;
             transport := IF ~ \A e \in temp: e \in side_end THEN temp ELSE {};
-            source := IF transport = {} THEN "" ELSE "end";
         };
     }
 }
 }*)
-\* BEGIN TRANSLATION (chksum(pcal) = "7c28162a" /\ chksum(tla) = "d2f548b1")
+\* BEGIN TRANSLATION (chksum(pcal) = "7c28162a" /\ chksum(tla) = "84038188")
 VARIABLES side_start, side_end
 
 (* define statement *)
@@ -69,9 +65,9 @@ IsValidState(side) == \/ FinalResult = side
 Inv == side_end # FinalResult
 PickFrom(side) == {CHOOSE item \in side : /\ IsValidState(side \ {item})}
 
-VARIABLES transport, temp, source
+VARIABLES transport, temp
 
-vars == << side_start, side_end, transport, temp, source >>
+vars == << side_start, side_end, transport, temp >>
 
 ProcSet == {1}
 
@@ -81,31 +77,26 @@ Init == (* Global variables *)
         (* Process Farmer *)
         /\ transport = {}
         /\ temp = {}
-        /\ source = ""
 
 Farmer == \/ /\ /\ transport = {}
                 /\ side_start # {}
              /\ transport' = PickFrom(side_start)
              /\ side_start' = side_start \ transport'
-             /\ source' = "start"
              /\ UNCHANGED <<side_end, temp>>
           \/ /\ /\ transport = {}
                 /\ side_end # {}
              /\ transport' = PickFrom(side_end)
              /\ side_end' = side_end \ transport'
-             /\ source' = "end"
              /\ UNCHANGED <<side_start, temp>>
-          \/ /\ transport # {} /\ source = "end"
+          \/ /\ transport # {}
              /\ temp' = (IF Cardinality(side_start) = 1 THEN {CHOOSE x \in side_start: TRUE} ELSE transport)
              /\ side_start' = (IF IsValidState(side_start \union transport) THEN side_start \union transport ELSE (side_start \union transport) \ temp')
              /\ transport' = (IF ~ \A e \in temp': e \in side_start' THEN temp' ELSE {})
-             /\ source' = (IF transport' = {} THEN "" ELSE "start")
              /\ UNCHANGED side_end
-          \/ /\ transport # {} /\ source = "start"
+          \/ /\ transport # {}
              /\ temp' = (IF Cardinality(side_end) = 1 THEN {CHOOSE x \in side_end: TRUE} ELSE transport)
              /\ side_end' = (IF IsValidState(side_end \union transport) THEN side_end \union transport ELSE (side_end \union transport) \ temp')
              /\ transport' = (IF ~ \A e \in temp': e \in side_end' THEN temp' ELSE {})
-             /\ source' = (IF transport' = {} THEN "" ELSE "end")
              /\ UNCHANGED side_start
 
 Next == Farmer

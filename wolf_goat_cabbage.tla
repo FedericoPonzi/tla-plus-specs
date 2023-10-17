@@ -43,20 +43,20 @@ W:
             PickWithEmptyTransport(side_end);
         } or {
             await transport # {};
-            temp := IF Cardinality(side_start) = 1 THEN {CHOOSE x \in side_start: TRUE} ELSE transport;
+            temp := side_start;
             side_start := IF IsValidState(side_start \union transport) THEN side_start \union transport ELSE (side_start \union transport) \ temp;
             transport := IF ~ \A e \in temp: e \in side_start THEN temp ELSE {};
         } or {
             \* leave the item on either coast.
             await transport # {};
-            temp := IF Cardinality(side_end) = 1 THEN {CHOOSE x \in side_end: TRUE} ELSE transport;
+            temp := side_end;
             side_end := IF IsValidState(side_end \union transport) THEN side_end \union transport ELSE (side_end \union transport) \ temp;
             transport := IF ~ \A e \in temp: e \in side_end THEN temp ELSE {};
         };
     }
 }
 }*)
-\* BEGIN TRANSLATION (chksum(pcal) = "7c28162a" /\ chksum(tla) = "84038188")
+\* BEGIN TRANSLATION (chksum(pcal) = "7c28162a" /\ chksum(tla) = "c4c51194")
 VARIABLES side_start, side_end
 
 (* define statement *)
@@ -89,12 +89,12 @@ Farmer == \/ /\ /\ transport = {}
              /\ side_end' = side_end \ transport'
              /\ UNCHANGED <<side_start, temp>>
           \/ /\ transport # {}
-             /\ temp' = (IF Cardinality(side_start) = 1 THEN {CHOOSE x \in side_start: TRUE} ELSE transport)
+             /\ temp' = side_start
              /\ side_start' = (IF IsValidState(side_start \union transport) THEN side_start \union transport ELSE (side_start \union transport) \ temp')
              /\ transport' = (IF ~ \A e \in temp': e \in side_start' THEN temp' ELSE {})
              /\ UNCHANGED side_end
           \/ /\ transport # {}
-             /\ temp' = (IF Cardinality(side_end) = 1 THEN {CHOOSE x \in side_end: TRUE} ELSE transport)
+             /\ temp' = side_end
              /\ side_end' = (IF IsValidState(side_end \union transport) THEN side_end \union transport ELSE (side_end \union transport) \ temp')
              /\ transport' = (IF ~ \A e \in temp': e \in side_end' THEN temp' ELSE {})
              /\ UNCHANGED side_start

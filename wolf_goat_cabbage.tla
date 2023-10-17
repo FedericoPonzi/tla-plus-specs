@@ -1,4 +1,7 @@
-
+A farmer with a wolf, a goat, and a cabbage must cross a river by boat. The boat can carry only 
+the farmer and a single item. If left unattended together, the wolf would eat the goat, or the 
+goat would eat the cabbage. How can they cross the river without anything being eaten?
+https://en.m.wikipedia.org/wiki/Wolf,_goat_and_cabbage_problem
 
 ---- MODULE wolf_goat_cabbage ----
 EXTENDS TLC, FiniteSets, Integers
@@ -29,8 +32,8 @@ macro PickWithEmptyTransport(side) {
 macro LeaveOrSwap(side) {
     await transport # {};
     temp := side;
-    side := IF IsValidState(temp \union transport) THEN temp \union transport ELSE transport;
-    transport := IF IsValidState(temp \union transport) THEN temp ELSE {};
+    side := IF IsValidState(side \union transport) THEN side \union transport ELSE (side \union transport) \ temp;
+    transport := IF ~ \A e \in temp: e \in side THEN temp ELSE {};
 }
 
 fair process (Farmer = 1) 
@@ -53,7 +56,7 @@ W:
     }
 }
 }*)
-\* BEGIN TRANSLATION (chksum(pcal) = "7c28162a" /\ chksum(tla) = "d6182a23")
+\* BEGIN TRANSLATION (chksum(pcal) = "7c28162a" /\ chksum(tla) = "69d781e1")
 VARIABLES side_start, side_end
 
 (* define statement *)
@@ -86,13 +89,13 @@ Farmer == \/ /\ /\ transport = {}
              /\ UNCHANGED <<side_start, temp>>
           \/ /\ transport # {}
              /\ temp' = side_start
-             /\ side_start' = (IF IsValidState(temp' \union transport) THEN temp' \union transport ELSE transport)
-             /\ transport' = IF IsValidState(temp' \union transport) THEN temp' ELSE {}
+             /\ side_start' = (IF IsValidState(side_start \union transport) THEN side_start \union transport ELSE (side_start \union transport) \ temp')
+             /\ transport' = (IF ~ \A e \in temp': e \in side_start' THEN temp' ELSE {})
              /\ UNCHANGED side_end
           \/ /\ transport # {}
              /\ temp' = side_end
-             /\ side_end' = (IF IsValidState(temp' \union transport) THEN temp' \union transport ELSE transport)
-             /\ transport' = IF IsValidState(temp' \union transport) THEN temp' ELSE {}
+             /\ side_end' = (IF IsValidState(side_end \union transport) THEN side_end \union transport ELSE (side_end \union transport) \ temp')
+             /\ transport' = (IF ~ \A e \in temp': e \in side_end' THEN temp' ELSE {})
              /\ UNCHANGED side_start
 
 Next == Farmer

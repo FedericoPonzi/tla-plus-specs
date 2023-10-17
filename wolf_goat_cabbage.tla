@@ -7,6 +7,7 @@ WOLF == "Wolf"
 GOAT == "Goat"
 CABBAGE == "Cabbage"
 FinalResult == {WOLF, GOAT, CABBAGE}
+InvalidStates == {{CABBAGE,GOAT }, {WOLF, GOAT}}
 baitinv == TRUE
 \*baitinv ==  TLCGet("level") < 7
 
@@ -16,54 +17,49 @@ variables side_start = FinalResult, side_end = {};
 
 define {
     IsValidState(side) == \/ FinalResult = side 
-                          \/ ~(side \in {{CABBAGE,GOAT }, {WOLF, GOAT}})
+                          \/ ~(side \in InvalidStates)
     Inv == side_end # FinalResult
-    PickFrom(side) == {CHOOSE item \in side : /\ IsValidState(side \ {item})}
 }
-
 macro PickWithEmptyTransport(side) {
     await /\ transport = {} 
           /\ side # {};
-    transport := PickFrom(side);
+    transport := {CHOOSE item \in side : /\ IsValidState(side \ {item})};
     side := side \ transport;
 }
-
-macro Leave(side) {
-    side := side \union transport;
-    transport := {};
+macro LeaveOrSwap(side) {
+    await transport # {};
+    temp := side;
+    side := IF IsValidState(temp \union transport) THEN temp \union transport ELSE transport;
+    transport := IF IsValidState(temp \union transport) THEN temp ELSE {};
 }
 
-fair process (Farmer = 1) variable transport = {}; temp = {};{
+fair process (Farmer = 1) 
+variable transport = {}; temp = {}; {
 W:
     while (TRUE){
         either {
             \* pick an item from side_start and load it.
             PickWithEmptyTransport(side_start);
         } or {
+            \* pick an item from side_start and load it.
             PickWithEmptyTransport(side_end);
         } or {
-            await transport # {};
-            temp := side_start;
-            side_start := IF IsValidState(side_start \union transport) THEN side_start \union transport ELSE (side_start \union transport) \ temp;
-            transport := IF ~ \A e \in temp: e \in side_start THEN temp ELSE {};
+            \* leave an item to side_start side. If needed to avoid conflicts, load the other item.
+            LeaveOrSwap(side_start);
         } or {
-            \* leave the item on either coast.
-            await transport # {};
-            temp := side_end;
-            side_end := IF IsValidState(side_end \union transport) THEN side_end \union transport ELSE (side_end \union transport) \ temp;
-            transport := IF ~ \A e \in temp: e \in side_end THEN temp ELSE {};
+            \* leave an item to side_end side. If needed to avoid conflicts, load the other item.
+            LeaveOrSwap(side_end);
         };
     }
 }
 }*)
-\* BEGIN TRANSLATION (chksum(pcal) = "7c28162a" /\ chksum(tla) = "c4c51194")
+\* BEGIN TRANSLATION (chksum(pcal) = "7c28162a" /\ chksum(tla) = "d6182a23")
 VARIABLES side_start, side_end
 
 (* define statement *)
 IsValidState(side) == \/ FinalResult = side
-                      \/ ~(side \in {{CABBAGE,GOAT }, {WOLF, GOAT}})
+                      \/ ~(side \in InvalidStates)
 Inv == side_end # FinalResult
-PickFrom(side) == {CHOOSE item \in side : /\ IsValidState(side \ {item})}
 
 VARIABLES transport, temp
 
@@ -80,23 +76,23 @@ Init == (* Global variables *)
 
 Farmer == \/ /\ /\ transport = {}
                 /\ side_start # {}
-             /\ transport' = PickFrom(side_start)
+             /\ transport' = {CHOOSE item \in side_start : /\ IsValidState(side_start \ {item})}
              /\ side_start' = side_start \ transport'
              /\ UNCHANGED <<side_end, temp>>
           \/ /\ /\ transport = {}
                 /\ side_end # {}
-             /\ transport' = PickFrom(side_end)
+             /\ transport' = {CHOOSE item \in side_end : /\ IsValidState(side_end \ {item})}
              /\ side_end' = side_end \ transport'
              /\ UNCHANGED <<side_start, temp>>
           \/ /\ transport # {}
              /\ temp' = side_start
-             /\ side_start' = (IF IsValidState(side_start \union transport) THEN side_start \union transport ELSE (side_start \union transport) \ temp')
-             /\ transport' = (IF ~ \A e \in temp': e \in side_start' THEN temp' ELSE {})
+             /\ side_start' = (IF IsValidState(temp' \union transport) THEN temp' \union transport ELSE transport)
+             /\ transport' = IF IsValidState(temp' \union transport) THEN temp' ELSE {}
              /\ UNCHANGED side_end
           \/ /\ transport # {}
              /\ temp' = side_end
-             /\ side_end' = (IF IsValidState(side_end \union transport) THEN side_end \union transport ELSE (side_end \union transport) \ temp')
-             /\ transport' = (IF ~ \A e \in temp': e \in side_end' THEN temp' ELSE {})
+             /\ side_end' = (IF IsValidState(temp' \union transport) THEN temp' \union transport ELSE transport)
+             /\ transport' = IF IsValidState(temp' \union transport) THEN temp' ELSE {}
              /\ UNCHANGED side_start
 
 Next == Farmer

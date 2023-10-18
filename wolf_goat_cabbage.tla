@@ -10,30 +10,17 @@ WOLF == "Wolf"
 GOAT == "Goat"
 CABBAGE == "Cabbage"
 FinalResult == {WOLF, GOAT, CABBAGE}
-InvalidStates == {{CABBAGE,GOAT }, {WOLF, GOAT}}
-baitinv == TRUE
-\*baitinv ==  TLCGet("level") < 7
+InvalidStates == {{CABBAGE,GOAT }, {WOLF, GOAT}, FinalResult}
+\*baitinv == TRUE
+baitinv ==  TLCGet("level") < 10
 
 (* --fair algorithm wolf_goat_cabbage {
 
 variables side_start = FinalResult, side_end = {};
 
 define {
-    IsValidState(side) == \/ FinalResult = side 
-                          \/ ~(side \in InvalidStates)
+    IsValidState(side) == ~(side \in InvalidStates)
     Inv == side_end # FinalResult
-}
-macro PickWithEmptyTransport(side) {
-    await /\ transport = {} 
-          /\ side # {};
-    transport := {CHOOSE item \in side : /\ IsValidState(side \ {item})};
-    side := side \ transport;
-}
-macro LeaveOrSwap(side) {
-    await transport # {};
-    temp := side;
-    side := IF IsValidState(side \union transport) THEN side \union transport ELSE (side \union transport) \ temp;
-    transport := IF ~ \A e \in temp: e \in side THEN temp ELSE {};
 }
 
 fair process (Farmer = 1) 
@@ -42,31 +29,46 @@ W:
     while (TRUE){
         either {
             \* pick an item from side_start and load it.
-            PickWithEmptyTransport(side_start);
+            await /\ transport = {} 
+                  /\ side_start # {} /\ IsValidState(side_end);
+            W1:
+            \* choose an item such that this side is left valid:
+            transport := {CHOOSE item \in side_start : IsValidState(side_start \ {item})};
+            side_start := side_start \ transport;
         } or {
-            \* pick an item from side_start and load it.
-            PickWithEmptyTransport(side_end);
+            \* pick an item from side_end and load it.
+            await /\ transport = {} 
+                  /\ side_end # {} /\ IsValidState(side_start);
+            W2:
+            \* choose an item such that this side is left valid:
+            transport := {CHOOSE item \in side_end : IsValidState(side_end \ {item})};
+            side_end := side_end \ transport;
         } or {
             \* leave an item to side_start side. If needed to avoid conflicts, load the other item.
-            LeaveOrSwap(side_start);
+            await transport # {};
+            W3:
+            side_start := side_start \union transport;
+            transport := {};
         } or {
-            \* leave an item to side_end side. If needed to avoid conflicts, load the other item.
-            LeaveOrSwap(side_end);
+            \* leave an item to side_start side. If needed to avoid conflicts, load the other item.
+            await transport # {};
+            W4:
+            side_end := side_end \union transport;
+            transport := {};
         };
     }
 }
 }*)
-\* BEGIN TRANSLATION (chksum(pcal) = "7c28162a" /\ chksum(tla) = "69d781e1")
-VARIABLES side_start, side_end
+\* BEGIN TRANSLATION (chksum(pcal) = "7c28162a" /\ chksum(tla) = "e5742211")
+VARIABLES side_start, side_end, pc
 
 (* define statement *)
-IsValidState(side) == \/ FinalResult = side
-                      \/ ~(side \in InvalidStates)
+IsValidState(side) == ~(side \in InvalidStates)
 Inv == side_end # FinalResult
 
 VARIABLES transport, temp
 
-vars == << side_start, side_end, transport, temp >>
+vars == << side_start, side_end, pc, transport, temp >>
 
 ProcSet == {1}
 
@@ -76,27 +78,46 @@ Init == (* Global variables *)
         (* Process Farmer *)
         /\ transport = {}
         /\ temp = {}
+        /\ pc = [self \in ProcSet |-> "W"]
 
-Farmer == \/ /\ /\ transport = {}
-                /\ side_start # {}
-             /\ transport' = {CHOOSE item \in side_start : /\ IsValidState(side_start \ {item})}
-             /\ side_start' = side_start \ transport'
-             /\ UNCHANGED <<side_end, temp>>
-          \/ /\ /\ transport = {}
-                /\ side_end # {}
-             /\ transport' = {CHOOSE item \in side_end : /\ IsValidState(side_end \ {item})}
-             /\ side_end' = side_end \ transport'
-             /\ UNCHANGED <<side_start, temp>>
-          \/ /\ transport # {}
-             /\ temp' = side_start
-             /\ side_start' = (IF IsValidState(side_start \union transport) THEN side_start \union transport ELSE (side_start \union transport) \ temp')
-             /\ transport' = (IF ~ \A e \in temp': e \in side_start' THEN temp' ELSE {})
-             /\ UNCHANGED side_end
-          \/ /\ transport # {}
-             /\ temp' = side_end
-             /\ side_end' = (IF IsValidState(side_end \union transport) THEN side_end \union transport ELSE (side_end \union transport) \ temp')
-             /\ transport' = (IF ~ \A e \in temp': e \in side_end' THEN temp' ELSE {})
-             /\ UNCHANGED side_start
+W == /\ pc[1] = "W"
+     /\ \/ /\ /\ transport = {}
+              /\ side_start # {} /\ IsValidState(side_end)
+           /\ pc' = [pc EXCEPT ![1] = "W1"]
+        \/ /\ /\ transport = {}
+              /\ side_end # {} /\ IsValidState(side_start)
+           /\ pc' = [pc EXCEPT ![1] = "W2"]
+        \/ /\ transport # {}
+           /\ pc' = [pc EXCEPT ![1] = "W3"]
+        \/ /\ transport # {}
+           /\ pc' = [pc EXCEPT ![1] = "W4"]
+     /\ UNCHANGED << side_start, side_end, transport, temp >>
+
+W1 == /\ pc[1] = "W1"
+      /\ transport' = {CHOOSE item \in side_start : IsValidState(side_start \ {item})}
+      /\ side_start' = side_start \ transport'
+      /\ pc' = [pc EXCEPT ![1] = "W"]
+      /\ UNCHANGED << side_end, temp >>
+
+W2 == /\ pc[1] = "W2"
+      /\ transport' = {CHOOSE item \in side_end : IsValidState(side_end \ {item})}
+      /\ side_end' = side_end \ transport'
+      /\ pc' = [pc EXCEPT ![1] = "W"]
+      /\ UNCHANGED << side_start, temp >>
+
+W3 == /\ pc[1] = "W3"
+      /\ side_start' = (side_start \union transport)
+      /\ transport' = {}
+      /\ pc' = [pc EXCEPT ![1] = "W"]
+      /\ UNCHANGED << side_end, temp >>
+
+W4 == /\ pc[1] = "W4"
+      /\ side_end' = (side_end \union transport)
+      /\ transport' = {}
+      /\ pc' = [pc EXCEPT ![1] = "W"]
+      /\ UNCHANGED << side_start, temp >>
+
+Farmer == W \/ W1 \/ W2 \/ W3 \/ W4
 
 Next == Farmer
 

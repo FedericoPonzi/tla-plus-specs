@@ -26,7 +26,9 @@ small possible state transitions and a lot of headache to me.
 
 
 ---- MODULE wolf_goat_cabbage ----
-EXTENDS TLC, FiniteSets, Integers
+LOCAL INSTANCE TLC
+LOCAL INSTANCE FiniteSets
+LOCAL INSTANCE Integers
 
 WOLF == "Wolf"
 GOAT == "Goat"

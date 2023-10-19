@@ -39,7 +39,7 @@ baitinv == TRUE
 
 \*baitinv ==  TLCGet("level") < 14
 
-(* --fair algorithm wolf_goat_cabbage {
+(* --algorithm wolf_goat_cabbage {
 
 variables side_start = FinalResult, side_end = {};
 
@@ -70,7 +70,7 @@ macro DropItemTo(side) {
     transport := {};
 }
 
-fair process (Farmer = 1) 
+process (Farmer = 1) 
 variable transport = {}; {
 W:
     while (TRUE){

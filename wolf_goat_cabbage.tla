@@ -46,10 +46,9 @@ variables side_start = FinalResult, side_end = {};
 define {
     IsValidState(side) == ~(side \in InvalidStates)
     Inv == side_end # FinalResult
-    \* this operator is used to all the possible
-    \* subsets of side of cardinality 1 such that
-    \* reamoving this subset would leave side in
-    \* a valid state.
+    \* this operator is used select an item
+    \* from side such that removing this item
+    \* will leave "side" in a valid state.
     ValidSubsets(side) == {s \in SUBSET(side): IsValidState(side_start \ s) /\ Cardinality(s) = 1}
 }
 

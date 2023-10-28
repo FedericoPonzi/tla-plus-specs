@@ -33,19 +33,18 @@ LOCAL INSTANCE Integers
 WOLF == "Wolf"
 GOAT == "Goat"
 CABBAGE == "Cabbage"
-FinalResult == {WOLF, GOAT, CABBAGE}
+All == {WOLF, GOAT, CABBAGE}
 InvalidStates == {{CABBAGE, GOAT}, {WOLF, GOAT}}
 baitinv == TRUE
+\* baitinv ==  TLCGet("level") < 14
 
-\*baitinv ==  TLCGet("level") < 14
+(*--algorithm wolf_goat_cabbage {
 
-(* --algorithm wolf_goat_cabbage {
-
-variables side_start = FinalResult, side_end = {};
+variables side_start = All, side_end = {};
 
 define {
     IsValidState(side) == ~(side \in InvalidStates)
-    Inv == side_end # FinalResult
+    Inv == side_end # All
     \* this operator is used select an item
     \* from side such that removing this item
     \* will leave "side" in a valid state.
@@ -92,7 +91,7 @@ VARIABLES side_start, side_end
 
 (* define statement *)
 IsValidState(side) == ~(side \in InvalidStates)
-Inv == side_end # FinalResult
+Inv == side_end # All
 
 
 ValidSubsets(side) == {s \in SUBSET(side): IsValidState(side_start \ s) /\ Cardinality(s) = 1}
@@ -104,7 +103,7 @@ vars == << side_start, side_end, transport >>
 ProcSet == {1}
 
 Init == (* Global variables *)
-        /\ side_start = FinalResult
+        /\ side_start = All
         /\ side_end = {}
         (* Process Farmer *)
         /\ transport = {}
@@ -138,9 +137,9 @@ Spec == /\ Init /\ [][Next]_vars
 
 \* END TRANSLATION 
 
-TypeOk == /\ \A el \in side_start : el \in {WOLF, GOAT, CABBAGE} 
-          /\ \A el \in side_end : el \in {WOLF, GOAT, CABBAGE}
-          /\ \A el \in transport : el \in {WOLF, GOAT, CABBAGE}
+TypeOk == /\ \A el \in side_start : el \in All
+          /\ \A el \in side_end : el \in All
+          /\ \A el \in transport : el \in All
     
 
 ====

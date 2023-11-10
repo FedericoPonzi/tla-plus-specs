@@ -20,7 +20,7 @@ is violated.
 > We simplified things by modeling the storing (and updating) of just a single data item, so we didn't have to model the hashing part. We also used shared memory. The client directly writes (say via an RPC) to the db of the storage nodes. 
 > I also gave the students the template for the model. 
 
-I've committed the base template separately in this repo (commit: ) in case you want to give it a stab yourself.
+I've committed the base template separately in this repo (check history) in case you want to give it a stab yourself.
 
 
 ----------------- MODULE voldemort_storage ------------

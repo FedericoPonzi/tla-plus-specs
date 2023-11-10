@@ -1,0 +1,37 @@
+A lease can be thought as a lock with a timeout. When a process holds a loc, it can access some resources.
+In case the lock owner dies, to avoid deadlock the lock has a fixed timeout time.
+If the lease is not renewed before the lease is expired (or explicitly released), a new process can attempt to acquire the lease.
+Sometimes it get implemented like this:
+
+1. while TRUE {
+2.     if (leaseAlmostOver()){
+3.         renewLease();
+4.     }
+5.     doOperationOnResource()
+6. }
+
+This code introduces a Time Of Check/ Time Of Use Bug (TOCTOU) on line 5. 
+After the lease is renewed, the lease owner could potentially be put to sleep for an 
+amount of time greater than the reaming lease time. 
+After waking up, the process would start the operation assuming he still 
+holds the lease which instead has since expired while the lease was since acquired by another process.
+
+One solution would be to use atomic commit, and check at the end if the lease is still valid.
+
+This specification models the above algorithm to expose the concurrency bug.
+
+The available states are:
+* WaitingForLease - Initial. When the process doesn't own a lock.
+* RenewedLease - maps to line 3.
+* DoingOperation - maps to line 4. 
+* Sleep - maps to the concept of sleep and expired lease.
+
+The invariant offered by a lease is similar to locks: only a single process can access the 
+critical section at a time. To verify this, we assume that a process will 
+not get a lease if we know it's already holded by another process. When the owner goes 
+to the sleep state, we assume it goes to sleep for enough time that the lease is expired. 
+This allows us to avoid dealing with the time variable.
+
+References:
+    * Designing Data Intensive Systems, chapter 8 section "Process Pauses"
+    * https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html

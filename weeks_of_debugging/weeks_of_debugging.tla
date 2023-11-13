@@ -34,20 +34,46 @@ void *consumer(void * arg) {
 
 It contains some concurrency bug, the goal of this spec is to spot it.
 
+In order to understand the below spec, it's good to understand the semantics of pthread_cond_wait/cond_signal.
+
+Condition variables work in this way: a condition modify, is protected by a mutex "mutex".
+The thread shall acquire the mutex, then when pthread_cond_wait will unlock the mutex and put it to sleep.
+When pthread_cond_signal is called over "modify", the thread will be weaken up and it will try to re-acquire
+the lock on mutex. Because clearly it's a waste of energy to wake multiple threads if all of them are going to try to
+take ownership of the same mutex (only one of them will win while the other will go back to sleep), pthread_cond_signal
+optimizes this by sending a signal to a random thread waiting to be waken up.
+
+So to recap, even if multiple threads are waiting on the mutex, only one of them will get the signal and actively try to
+acquire the lock. 
+
+After solving the problem, the configuation matters: at least two producers are required (and a single consumer) to show
+the deadlock beahvior.
+
+
 ---- MODULE weeks_of_debugging ----
 EXTENDS TLC, Sequences, Naturals, FiniteSets
 CONSTANT BufferSize, Producers, Consumers
-\*baitinv == TRUE
-baitinv ==  TLCGet("level") < 11
+baitinv == TRUE
+\*baitinv ==  TLCGet("level") < 11
 
-empty == 10
-
+empty == "empty"
+All == Consumers \cup Producers
 (* --algorithm weeks_of_debugging {
-    variables mutex = empty, buffer = 0;
+    variables mutex = empty, 
+              buffer = 0, 
+              signaled = empty, 
+              waitgroup = {};
     define {
-        TypeOk == /\ buffer >= 0 /\ buffer <= BufferSize
+        TypeOk == /\ buffer >= 0 
+                  /\ buffer <= BufferSize
+                  /\ signaled \in All \cup {empty}
+                  /\ mutex \in All \cup {empty}
+                  /\ waitgroup \subseteq All 
+
         IsBufferFull == buffer = BufferSize
         IsBufferEmpty == buffer = 0
+
+        Inv == waitgroup # Producers \cup Consumers
     }
     fair process (prod \in Producers) {
 PROD:
@@ -57,12 +83,18 @@ PROD:
 PROD1:
             while(IsBufferFull) {
                 mutex := empty;
+                waitgroup := waitgroup \cup {self};
 PROD3:
-                await mutex = empty;
+                await mutex = empty /\ signaled = self;
                 mutex := self;
+                signaled := empty;
             };
 PRODUCING:
             buffer := buffer +1;
+            with (t \in waitgroup) {
+                signaled := t;
+                waitgroup := waitgroup \ {t};
+            };
             mutex := empty;
         }
     }
@@ -75,32 +107,47 @@ CONS:
 CONS1:
             while(IsBufferEmpty) {
                 mutex := empty;
+                waitgroup := waitgroup \cup {self};
 CONS3:
-                await mutex = empty;
+                await mutex = empty /\ signaled = self;
                 mutex := self;
+                signaled := empty;
             };
 CONSUMING:
             buffer := buffer -1;
+            with (t \in waitgroup) {
+                signaled := t;
+                waitgroup := waitgroup \ {t};
+            };
             mutex := empty;
         }
     }
 } *)
-\* BEGIN TRANSLATION (chksum(pcal) = "4ecf8bc0" /\ chksum(tla) = "d8157b85")
-VARIABLES mutex, buffer, pc
+\* BEGIN TRANSLATION (chksum(pcal) = "c5ad8119" /\ chksum(tla) = "4d498a1a")
+VARIABLES mutex, buffer, signaled, waitgroup, pc
 
 (* define statement *)
-TypeOk == /\ buffer >= 0 /\ buffer <= BufferSize
+TypeOk == /\ buffer >= 0
+          /\ buffer <= BufferSize
+          /\ signaled \in All \cup {empty}
+          /\ mutex \in All \cup {empty}
+          /\ waitgroup \subseteq All
+
 IsBufferFull == buffer = BufferSize
 IsBufferEmpty == buffer = 0
 
+Inv == waitgroup # Producers \cup Consumers
 
-vars == << mutex, buffer, pc >>
+
+vars == << mutex, buffer, signaled, waitgroup, pc >>
 
 ProcSet == (Producers) \cup (Consumers)
 
 Init == (* Global variables *)
         /\ mutex = empty
         /\ buffer = 0
+        /\ signaled = empty
+        /\ waitgroup = {}
         /\ pc = [self \in ProcSet |-> CASE self \in Producers -> "PROD"
                                         [] self \in Consumers -> "CONS"]
 
@@ -108,24 +155,29 @@ PROD(self) == /\ pc[self] = "PROD"
               /\ mutex = empty
               /\ mutex' = self
               /\ pc' = [pc EXCEPT ![self] = "PROD1"]
-              /\ UNCHANGED buffer
+              /\ UNCHANGED << buffer, signaled, waitgroup >>
 
 PROD1(self) == /\ pc[self] = "PROD1"
                /\ IF IsBufferFull
                      THEN /\ mutex' = empty
+                          /\ waitgroup' = (waitgroup \cup {self})
                           /\ pc' = [pc EXCEPT ![self] = "PROD3"]
                      ELSE /\ pc' = [pc EXCEPT ![self] = "PRODUCING"]
-                          /\ mutex' = mutex
-               /\ UNCHANGED buffer
+                          /\ UNCHANGED << mutex, waitgroup >>
+               /\ UNCHANGED << buffer, signaled >>
 
 PROD3(self) == /\ pc[self] = "PROD3"
-               /\ mutex = empty
+               /\ mutex = empty /\ signaled = self
                /\ mutex' = self
+               /\ signaled' = empty
                /\ pc' = [pc EXCEPT ![self] = "PROD1"]
-               /\ UNCHANGED buffer
+               /\ UNCHANGED << buffer, waitgroup >>
 
 PRODUCING(self) == /\ pc[self] = "PRODUCING"
                    /\ buffer' = buffer +1
+                   /\ \E t \in waitgroup:
+                        /\ signaled' = t
+                        /\ waitgroup' = waitgroup \ {t}
                    /\ mutex' = empty
                    /\ pc' = [pc EXCEPT ![self] = "PROD"]
 
@@ -135,24 +187,29 @@ CONS(self) == /\ pc[self] = "CONS"
               /\ mutex = empty
               /\ mutex' = self
               /\ pc' = [pc EXCEPT ![self] = "CONS1"]
-              /\ UNCHANGED buffer
+              /\ UNCHANGED << buffer, signaled, waitgroup >>
 
 CONS1(self) == /\ pc[self] = "CONS1"
                /\ IF IsBufferEmpty
                      THEN /\ mutex' = empty
+                          /\ waitgroup' = (waitgroup \cup {self})
                           /\ pc' = [pc EXCEPT ![self] = "CONS3"]
                      ELSE /\ pc' = [pc EXCEPT ![self] = "CONSUMING"]
-                          /\ mutex' = mutex
-               /\ UNCHANGED buffer
+                          /\ UNCHANGED << mutex, waitgroup >>
+               /\ UNCHANGED << buffer, signaled >>
 
 CONS3(self) == /\ pc[self] = "CONS3"
-               /\ mutex = empty
+               /\ mutex = empty /\ signaled = self
                /\ mutex' = self
+               /\ signaled' = empty
                /\ pc' = [pc EXCEPT ![self] = "CONS1"]
-               /\ UNCHANGED buffer
+               /\ UNCHANGED << buffer, waitgroup >>
 
 CONSUMING(self) == /\ pc[self] = "CONSUMING"
                    /\ buffer' = buffer -1
+                   /\ \E t \in waitgroup:
+                        /\ signaled' = t
+                        /\ waitgroup' = waitgroup \ {t}
                    /\ mutex' = empty
                    /\ pc' = [pc EXCEPT ![self] = "CONS"]
 

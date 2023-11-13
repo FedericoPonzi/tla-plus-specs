@@ -46,18 +46,24 @@ optimizes this by sending a signal to a random thread waiting to be waken up.
 So to recap, even if multiple threads are waiting on the mutex, only one of them will get the signal and actively try to
 acquire the lock. 
 
-After solving the problem, the configuation matters: at least two producers are required (and a single consumer) to show
-the deadlock beahvior.
+After solving the problem, the configuation matters: the program works well with one consumer and one producer, but 
+deadlocks with a confiugration that has two or more of either. The buffer size doesn't really matter.
 
 
 ---- MODULE weeks_of_debugging ----
 EXTENDS TLC, Sequences, Naturals, FiniteSets
 CONSTANT BufferSize, Producers, Consumers
+
+ASSUME BufferSize > 0
+ASSUME Cardinality(Producers) > 0
+ASSUME Cardinality(Consumers) > 0
+
 baitinv == TRUE
 \*baitinv ==  TLCGet("level") < 11
 
 empty == "empty"
 All == Consumers \cup Producers
+
 (* --algorithm weeks_of_debugging {
     variables mutex = empty, 
               buffer = 0, 
@@ -98,7 +104,8 @@ PRODUCING:
             mutex := empty;
         }
     }
-
+\* Consumer is specular to Producer, but
+\* waits until buffer is not empty and reduces buffer length
     fair process (cons \in Consumers) {
 CONS:
         while(TRUE) {

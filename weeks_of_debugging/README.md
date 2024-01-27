@@ -1,7 +1,7 @@
 This code is from the talk SREcon20 Americas - Weeks of Debugging Can Save You Hours of TLA+ by Markus A. Kuppe.
 https://www.youtube.com/watch?v=wjsI0lTSjIo
 
-
+```c
 void *producer(void * arg) {
     while(1) {
         pthread_mutex_lock(&mutex); // acquire the lock
@@ -31,5 +31,5 @@ void *consumer(void * arg) {
         }
     }
 }
-
+```
 It contains some concurrency bug, the goal of this spec is to spot it.

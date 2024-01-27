@@ -7,14 +7,15 @@ can be granted to another process.
 they are made. 
 (III) If every process which is granted the resource eventually releases it, then every request is eventually granted.
 
-safety: 
+Safety: 
     * Only a single process can access the resource at a time. Checked via assert.
-liveness:
+Liveness:
     * All processes that requested access to the resource, eventually get it.
 
 As we're just trying to show a way to use lamport clocks to solve a synchronization problem, 
 the algorithm presented in the paper above and modeled here doesn't deal with crashes.
-By changing the ProcessCanFail constant in the config to TRUE, we can see that liveness is broken.
+When the `ProcessCanFail` constant in the config to TRUE, the smallest process ("0") will never send an AckRequestResource back.
+This breaks the liveness property.
 
 ---- MODULE lamport_clock ----
 LOCAL INSTANCE Sequences
@@ -105,7 +106,7 @@ EmptyMailbox == <<"Empty">>
                 \* message being <<MessageType, Process, timestamp>>
                 await mailbox[self][1] = RequestResource;
                 \* Add it to the local requests queue
-                requests_queue := requests_queue \union  {mailbox[self]};
+                requests_queue := requests_queue \union {mailbox[self]};
                 \* Bump the timestamp
                 BumpTimestampO(mailbox[self][3]);
                 \* Respond with an Ack.
@@ -113,7 +114,9 @@ EmptyMailbox == <<"Empty">>
                 \* buffer has space only for a message at a time
                 \* so to send the ack back, we need to wait for the other process to free up their queue
                 await mailbox[mailbox[self][2]] = EmptyMailbox; 
-                mailbox[mailbox[self][2]] := <<AckRequestResource, self, local_timestamp>>;
+                mailbox[mailbox[self][2]] := IF ProcessCanFail /\ \A proc \in Processes \ {self}: proc > self \* if process can fail and this is the smallest
+                                             THEN EmptyMailbox
+                                             ELSE <<AckRequestResource, self, local_timestamp>>;
 EMPTY_MAILBOX:
                 \* handle of the message is completed, release the message queue
                 mailbox[self] := EmptyMailbox;
@@ -161,7 +164,7 @@ EMPTY_MAILBOX:
 } 
 
 *)
-\* BEGIN TRANSLATION (chksum(pcal) = "7c28162a" /\ chksum(tla) = "17d2a7cf")
+\* BEGIN TRANSLATION (chksum(pcal) = "7c28162a" /\ chksum(tla) = "4d664f9f")
 VARIABLES resource_owner, mailbox, pc
 
 (* define statement *)
@@ -195,7 +198,6 @@ TypeMailbox == \/ \A m \in DOMAIN mailbox : \/ mailbox[m] = EmptyMailbox
 TypeResourceOwner == \A ro \in resource_owner: ro \in Processes
 
 
-
 Inv == Cardinality(resource_owner) <= 1
 
 VARIABLES local_timestamp, ack_request_resource, requests_queue
@@ -225,10 +227,12 @@ S(self) == /\ pc[self] = "S"
                  /\ pc' = [pc EXCEPT ![self] = "S"]
                  /\ UNCHANGED resource_owner
               \/ /\ mailbox[self][1] = RequestResource
-                 /\ requests_queue' = [requests_queue EXCEPT ![self] = requests_queue[self] \union  {mailbox[self]}]
+                 /\ requests_queue' = [requests_queue EXCEPT ![self] = requests_queue[self] \union {mailbox[self]}]
                  /\ local_timestamp' = [local_timestamp EXCEPT ![self] = Min(Max(local_timestamp[self], (mailbox[self][3])) + 1, MaxTimestamp)]
                  /\ mailbox[mailbox[self][2]] = EmptyMailbox
-                 /\ mailbox' = [mailbox EXCEPT ![mailbox[self][2]] = <<AckRequestResource, self, local_timestamp'[self]>>]
+                 /\ mailbox' = [mailbox EXCEPT ![mailbox[self][2]] = IF ProcessCanFail /\ \A proc \in Processes \ {self}: proc > self
+                                                                     THEN EmptyMailbox
+                                                                     ELSE <<AckRequestResource, self, local_timestamp'[self]>>]
                  /\ pc' = [pc EXCEPT ![self] = "EMPTY_MAILBOX"]
                  /\ UNCHANGED <<resource_owner, ack_request_resource>>
               \/ /\ mailbox[self][1] = ReleaseResource

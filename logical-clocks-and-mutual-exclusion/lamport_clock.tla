@@ -1,18 +1,20 @@
 Lamport clocks: https://lamport.azurewebsites.net/pubs/time-clocks.pdf
 
-Mutual exclusion
+Mutual exclusion rules:
 (I) A process which has been granted the resource must release it before it
 can be granted to another process. 
 (II) Different requests for the resource must be granted in the order in which
 they are made. 
 (III) If every process which is granted the resource eventually releases it, then every request is eventually granted.
 
-todo: failure:
-> A process must know all the commands issued by other processes, so
-> that the failure of a single process will make it impossible
-> for any other process to execute State Machine com-
-> mands, thereby halting the system.
+safety: 
+    * Only a single process can access the resource at a time. Checked via assert.
+liveness:
+    * All processes that requested access to the resource, eventually get it.
 
+As we're just trying to show a way to use lamport clocks to solve a synchronization problem, 
+the algorithm presented in the paper above and modeled here doesn't deal with crashes.
+By changing the ProcessCanFail constant in the config to TRUE, we can see that liveness is broken.
 
 ---- MODULE lamport_clock ----
 LOCAL INSTANCE Sequences
@@ -23,34 +25,33 @@ LOCAL INSTANCE Folds
 LOCAL INSTANCE TLC
 LOCAL INSTANCE Integers
 
-CONSTANT Processes
+CONSTANT Processes, ProcessCanFail, MaxTimestamp
+ASSUME IsFiniteSet(Processes)
 ASSUME \A p \in Processes : p \in Nat
+
 AckRequestResource == "AckRequestResource"
 RequestResource == "RequestResource"
 ReleaseResource == "ReleaseResource"
 Commands == {RequestResource, AckRequestResource, ReleaseResource}
 EmptyMailbox == <<"Empty">>
 
-baitinv == TRUE
-\*baitinv ==  TLCGet("level") < 30
-
 (* --fair algorithm mutual_exclusion{
 
-    variables resource_owner = -1,
+    variables resource_owner = {},
               mailbox = [p \in Processes |-> EmptyMailbox],
               resource_owner_history = [p \in Processes |-> 0]; 
 
     define {
         Max(x, y) == IF x > y THEN x ELSE y
+        Min(x, y) == IF x > y THEN y ELSE x
         CanSendMessage(myself) == \A p \in Processes : mailbox[p] = EmptyMailbox
         \* has the shape: <<"EmptyMailbox"> | <<Command, process, timestamp>>
-        TypeMailbox == \/ \A m \in DOMAIN mailbox : mailbox[m] = EmptyMailbox 
-                       \/ \A m \in DOMAIN mailbox : /\ mailbox[m][1] \in Commands
-                                                    /\ mailbox[m][2] \in Processes 
-                                                    /\ mailbox[m][3] \in Nat
+        TypeMailbox == \/ \A m \in DOMAIN mailbox : \/ mailbox[m] = EmptyMailbox
+                                                    \/  /\ mailbox[m][1] \in Commands
+                                                        /\ mailbox[m][2] \in Processes 
+                                                        /\ mailbox[m][3] \in Nat
  
-        TypeOk == /\ IsFiniteSet(Processes)
-                  /\ TypeMailbox         
+        TypeOk == TypeMailbox
         
         SetToSeq(S) == 
             CHOOSE f \in [1..Cardinality(S) -> S] : IsInjective(f)
@@ -69,19 +70,19 @@ baitinv == TRUE
             THEN TRUE
             ELSE FALSE
 
-        \* everyone eventually get access to the resource
-        Inv ==  ~ (\A p \in Processes : resource_owner_history[p] > 0)
+        \* SAFETY: Only one process is allowed in the critical section
+        Inv == Cardinality(resource_owner) <= 1
     }
     \* Used for the message sending event
     macro BumpTimestamp() {
-        local_timestamp := local_timestamp + 1;
+        local_timestamp := Min(local_timestamp + 1, MaxTimestamp);
     }
     \* Used for the message reciving event. We need to take max of local_timestamp and other and bump the result.
     macro BumpTimestampO(other) {
-        local_timestamp := Max(local_timestamp, other) + 1;
+        local_timestamp := Min(Max(local_timestamp, other) + 1, MaxTimestamp);
     }
     macro SendRequestResourceMessage() {
-        await /\ resource_owner = -1 
+        await /\ Cardinality(resource_owner) = 0
               /\ CanSendMessage(self) 
               /\ Cardinality(ack_request_resource) = 0;
         BumpTimestamp();
@@ -99,12 +100,12 @@ baitinv == TRUE
     }
 
     macro ReleaseResourceOwnership () {
-        await resource_owner = self /\ CanSendMessage(self);
+        await self \in resource_owner  /\ CanSendMessage(self);
         \* If we're the resource owner it means we're at the top of the local queue, so it should work
         requests_queue := SeqToSet(Tail(SetToSortSeq(requests_queue, SortFunction))); 
         BumpTimestamp();
         mailbox := [p \in Processes |-> IF p = self THEN EmptyMailbox ELSE <<ReleaseResource, self, local_timestamp>>];
-        resource_owner := -1;
+        resource_owner :=  resource_owner \ {self};
         ack_request_resource := {};
     }
     macro TakeOwnership() {
@@ -112,11 +113,10 @@ baitinv == TRUE
               /\ Head(SetToSortSeq(requests_queue, SortFunction))[2] = self
               /\ Cardinality(ack_request_resource) = Cardinality(Processes)
               \* doesn't make sense to take ownership again of this resource if we already own it
-              /\ resource_owner # self;
+              /\ self \notin resource_owner;
 
-        assert resource_owner = -1;
         resource_owner_history[self] := resource_owner_history[self] + 1;
-        resource_owner := self;
+        resource_owner := resource_owner \union {self};
     }
 
     macro HandleAckRequestResourceMessage() {
@@ -180,20 +180,20 @@ EMPTY_MAILBOX:
 } 
 
 *)
-\* BEGIN TRANSLATION (chksum(pcal) = "7c28162a" /\ chksum(tla) = "20e09a51")
+\* BEGIN TRANSLATION (chksum(pcal) = "7c28162a" /\ chksum(tla) = "550110e9")
 VARIABLES resource_owner, mailbox, resource_owner_history, pc
 
 (* define statement *)
 Max(x, y) == IF x > y THEN x ELSE y
+Min(x, y) == IF x > y THEN y ELSE x
 CanSendMessage(myself) == \A p \in Processes : mailbox[p] = EmptyMailbox
 
-TypeMailbox == \/ mailbox = EmptyMailbox
-               \/ \A m \in DOMAIN mailbox : /\ mailbox[m][1] \in Commands
-                                            /\ mailbox[m][2] \in Processes
-                                            /\ mailbox[m][3] \in Nat
+TypeMailbox == \/ \A m \in DOMAIN mailbox : \/ mailbox[m] = EmptyMailbox
+                                            \/  /\ mailbox[m][1] \in Commands
+                                                /\ mailbox[m][2] \in Processes
+                                                /\ mailbox[m][3] \in Nat
 
-TypeOk == /\ IsFiniteSet(Processes)
-          /\ TypeMailbox
+TypeOk == TypeMailbox
 
 SetToSeq(S) ==
     CHOOSE f \in [1..Cardinality(S) -> S] : IsInjective(f)
@@ -213,7 +213,7 @@ SortFunction(seq1, seq2) ==
     ELSE FALSE
 
 
-Inv ==  ~ (\A p \in Processes : resource_owner_history[p] > 0)
+Inv == Cardinality(resource_owner) <= 1
 
 VARIABLES local_timestamp, ack_request_resource, requests_queue
 
@@ -223,7 +223,7 @@ vars == << resource_owner, mailbox, resource_owner_history, pc,
 ProcSet == (Processes)
 
 Init == (* Global variables *)
-        /\ resource_owner = -1
+        /\ resource_owner = {}
         /\ mailbox = [p \in Processes |-> EmptyMailbox]
         /\ resource_owner_history = [p \in Processes |-> 0]
         (* Process p *)
@@ -233,10 +233,10 @@ Init == (* Global variables *)
         /\ pc = [self \in ProcSet |-> "S"]
 
 S(self) == /\ pc[self] = "S"
-           /\ \/ /\ /\ resource_owner = -1
+           /\ \/ /\ /\ Cardinality(resource_owner) = 0
                     /\ CanSendMessage(self)
                     /\ Cardinality(ack_request_resource[self]) = 0
-                 /\ local_timestamp' = [local_timestamp EXCEPT ![self] = local_timestamp[self] + 1]
+                 /\ local_timestamp' = [local_timestamp EXCEPT ![self] = Min(local_timestamp[self] + 1, MaxTimestamp)]
                  /\ requests_queue' = [requests_queue EXCEPT ![self] = requests_queue[self] \union {<<RequestResource, self, local_timestamp'[self]>>}]
                  /\ mailbox' = [p \in Processes |-> IF p = self THEN EmptyMailbox ELSE <<RequestResource,self, local_timestamp'[self]>>]
                  /\ ack_request_resource' = [ack_request_resource EXCEPT ![self] = {<<AckRequestResource, self, local_timestamp'[self]>>}]
@@ -244,22 +244,22 @@ S(self) == /\ pc[self] = "S"
                  /\ UNCHANGED <<resource_owner, resource_owner_history>>
               \/ /\ mailbox[self][1] = RequestResource
                  /\ requests_queue' = [requests_queue EXCEPT ![self] = requests_queue[self] \union  {mailbox[self]}]
-                 /\ local_timestamp' = [local_timestamp EXCEPT ![self] = Max(local_timestamp[self], (mailbox[self][3])) + 1]
+                 /\ local_timestamp' = [local_timestamp EXCEPT ![self] = Min(Max(local_timestamp[self], (mailbox[self][3])) + 1, MaxTimestamp)]
                  /\ mailbox[mailbox[self][2]] = EmptyMailbox
                  /\ mailbox' = [mailbox EXCEPT ![mailbox[self][2]] = <<AckRequestResource, self, local_timestamp'[self]>>]
                  /\ pc' = [pc EXCEPT ![self] = "EMPTY_MAILBOX"]
                  /\ UNCHANGED <<resource_owner, resource_owner_history, ack_request_resource>>
               \/ /\ mailbox[self][1] = ReleaseResource
                  /\ requests_queue' = [requests_queue EXCEPT ![self] = {req \in requests_queue[self] : req[2] # mailbox[self][2]}]
-                 /\ local_timestamp' = [local_timestamp EXCEPT ![self] = Max(local_timestamp[self], (mailbox[self][3])) + 1]
+                 /\ local_timestamp' = [local_timestamp EXCEPT ![self] = Min(Max(local_timestamp[self], (mailbox[self][3])) + 1, MaxTimestamp)]
                  /\ mailbox' = [mailbox EXCEPT ![self] = EmptyMailbox]
                  /\ pc' = [pc EXCEPT ![self] = "S"]
                  /\ UNCHANGED <<resource_owner, resource_owner_history, ack_request_resource>>
-              \/ /\ resource_owner = self /\ CanSendMessage(self)
+              \/ /\ self \in resource_owner  /\ CanSendMessage(self)
                  /\ requests_queue' = [requests_queue EXCEPT ![self] = SeqToSet(Tail(SetToSortSeq(requests_queue[self], SortFunction)))]
-                 /\ local_timestamp' = [local_timestamp EXCEPT ![self] = local_timestamp[self] + 1]
+                 /\ local_timestamp' = [local_timestamp EXCEPT ![self] = Min(local_timestamp[self] + 1, MaxTimestamp)]
                  /\ mailbox' = [p \in Processes |-> IF p = self THEN EmptyMailbox ELSE <<ReleaseResource, self, local_timestamp'[self]>>]
-                 /\ resource_owner' = -1
+                 /\ resource_owner' = resource_owner \ {self}
                  /\ ack_request_resource' = [ack_request_resource EXCEPT ![self] = {}]
                  /\ pc' = [pc EXCEPT ![self] = "S"]
                  /\ UNCHANGED resource_owner_history
@@ -267,11 +267,9 @@ S(self) == /\ pc[self] = "S"
                     /\ Head(SetToSortSeq(requests_queue[self], SortFunction))[2] = self
                     /\ Cardinality(ack_request_resource[self]) = Cardinality(Processes)
                     
-                    /\ resource_owner # self
-                 /\ Assert(resource_owner = -1, 
-                           "Failure of assertion at line 117, column 9 of macro called at line 173, column 17.")
+                    /\ self \notin resource_owner
                  /\ resource_owner_history' = [resource_owner_history EXCEPT ![self] = resource_owner_history[self] + 1]
-                 /\ resource_owner' = self
+                 /\ resource_owner' = (resource_owner \union {self})
                  /\ pc' = [pc EXCEPT ![self] = "S"]
                  /\ UNCHANGED <<mailbox, local_timestamp, ack_request_resource, requests_queue>>
               \/ /\ mailbox[self][1] = AckRequestResource
@@ -279,14 +277,14 @@ S(self) == /\ pc[self] = "S"
                                                                                        /\ mailbox[self][2] \notin {m[2] : m \in ack_request_resource[self]}
                                                                                    THEN ack_request_resource[self] \union {mailbox[self]}
                                                                                    ELSE ack_request_resource[self]]
-                 /\ local_timestamp' = [local_timestamp EXCEPT ![self] = Max(local_timestamp[self], (mailbox[self][3])) + 1]
+                 /\ local_timestamp' = [local_timestamp EXCEPT ![self] = Min(Max(local_timestamp[self], (mailbox[self][3])) + 1, MaxTimestamp)]
                  /\ mailbox' = [mailbox EXCEPT ![self] = EmptyMailbox]
                  /\ pc' = [pc EXCEPT ![self] = "S"]
                  /\ UNCHANGED <<resource_owner, resource_owner_history, requests_queue>>
 
 EMPTY_MAILBOX(self) == /\ pc[self] = "EMPTY_MAILBOX"
                        /\ mailbox' = [mailbox EXCEPT ![self] = EmptyMailbox]
-                       /\ local_timestamp' = [local_timestamp EXCEPT ![self] = local_timestamp[self] + 1]
+                       /\ local_timestamp' = [local_timestamp EXCEPT ![self] = Min(local_timestamp[self] + 1, MaxTimestamp)]
                        /\ pc' = [pc EXCEPT ![self] = "S"]
                        /\ UNCHANGED << resource_owner, resource_owner_history, 
                                        ack_request_resource, requests_queue >>
@@ -301,5 +299,8 @@ Spec == /\ Init /\ [][Next]_vars
 
 \* END TRANSLATION 
 
+\* LIVENESS: either we eventually get ownership, or we're at the edge of the timestamp boundary.
+ResourceAcquisition == \A proc \in Processes : Cardinality(ack_request_resource[proc]) > 0 ~> \/ resource_owner_history[proc] > 0 
+                                                                                              \/ local_timestamp[proc] = MaxTimestamp 
 
 ====

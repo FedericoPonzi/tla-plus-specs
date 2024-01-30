@@ -28,15 +28,19 @@ LOCAL INSTANCE Integers
 
 CONSTANT Processes, ProcessCanFail, MaxTimestamp
 ASSUME IsFiniteSet(Processes)
+ASSUME Cardinality(Processes) > 1
 ASSUME \A p \in Processes : p \in Nat
+ASSUME MaxTimestamp \in Nat
+ASSUME ProcessCanFail \in BOOLEAN 
 
 AckRequestResource == "AckRequestResource"
 RequestResource == "RequestResource"
 ReleaseResource == "ReleaseResource"
 Commands == {RequestResource, AckRequestResource, ReleaseResource}
-EmptyMailbox == <<"Empty">>
+EmptyMailbox == [msg |-> "Empty"]
+MessageType == [msg: Commands, proc: Processes, ts: Nat] \cup [msg: {"Empty"}]
 
-(* --fair algorithm mutual_exclusion{
+(* --fair algorithm mutual_exclusion {
 
     variables resource_owner = {},
               mailbox = [p \in Processes |-> EmptyMailbox]; 
@@ -53,23 +57,19 @@ EmptyMailbox == <<"Empty">>
 
         \* Sort function for a RequestResource message with shape <<RequestResource, pid, timestamp>>
         SortFunction(seq1, seq2) ==
-            IF seq1[3] > seq2[3]
+            IF seq1.ts > seq2.ts
             THEN FALSE
-            ELSE IF seq1[3] < seq2[3]
+            ELSE IF seq1.ts < seq2.ts
             THEN TRUE
-            ELSE IF seq1[2] > seq2[2]
+            ELSE IF seq1.proc > seq2.proc
             THEN FALSE
-            ELSE IF seq1[2] < seq2[2]
+            ELSE IF seq1.proc < seq2.proc
             THEN TRUE
             ELSE FALSE
         
         TypeLamportTimestamp(t) == t \in Nat /\ t <= MaxTimestamp
 
-        \* Has the shape: <<"EmptyMailbox"> | <<Command, process, timestamp>>
-        TypeMailbox == \/ \A m \in DOMAIN mailbox : \/ mailbox[m] = EmptyMailbox
-                                                    \/  /\ mailbox[m][1] \in Commands
-                                                        /\ mailbox[m][2] \in Processes 
-                                                        /\ TypeLamportTimestamp(mailbox[m][3])
+        TypeMailbox == \A m \in DOMAIN mailbox : mailbox[m] \in MessageType
         TypeResourceOwner == \A ro \in resource_owner: ro \in Processes
 
         \* SAFETY: Only one process is allowed in the critical section
@@ -90,73 +90,90 @@ EmptyMailbox == <<"Empty">>
               requests_queue = {};
     {
     S: 
-        while (TRUE) {
-            either { 
-                \* send a request resource message
-                await /\ Cardinality(resource_owner) = 0
-                    /\ CanSendMessage(self) 
-                    /\ Cardinality(ack_request_resource) = 0;
+    while (TRUE) {
+        either { 
+                (*********************
+                    1. To request the resource, process Pi sends the message <<RequestsResource, Pi, Tm>> 
+                        to every other process, and puts that message on its own request queue, where Tm is the timestamp of the message.
+                **********************)
+                await /\ CanSendMessage(self) 
+                      /\ Cardinality(ack_request_resource) = 0;
                 BumpTimestamp();
                 \* append to the local requests queue
-                requests_queue := requests_queue \union {<<RequestResource, self, local_timestamp>>};
-                mailbox := [p \in Processes |-> IF p = self THEN EmptyMailbox ELSE <<RequestResource,self, local_timestamp>>];
-                ack_request_resource := {<<AckRequestResource, self, local_timestamp>>};
+                requests_queue := requests_queue \union {[ msg |-> RequestResource, proc |-> self, ts |-> local_timestamp]};
+                mailbox := [p \in Processes |-> IF p = self THEN EmptyMailbox ELSE [ msg |-> RequestResource, proc |-> self, ts |-> local_timestamp]];
+                ack_request_resource := {[ msg |-> AckRequestResource, proc |-> self, ts |-> local_timestamp]};
             } or { 
-                \* Handle a request resource message by 1. adding it to the local requests_queue and 2. sending a timestampated ack back
-                \* message being <<MessageType, Process, timestamp>>
-                await mailbox[self][1] = RequestResource;
+                (*********************
+                    2. When process Pj receives the message <<RequestsResource, Pi, Tm>> requests resource, 
+                        (i) it places it on its request queue and 
+                        (ii) sends a (timestamped) acknowledgment message to Pi.
+                **********************)
+                await mailbox[self].msg = RequestResource;
                 \* Add it to the local requests queue
                 requests_queue := requests_queue \union {mailbox[self]};
                 \* Bump the timestamp
-                BumpTimestampO(mailbox[self][3]);
+                BumpTimestampO(mailbox[self].ts);
                 \* Respond with an Ack.
 
                 \* buffer has space only for a message at a time
                 \* so to send the ack back, we need to wait for the other process to free up their queue
-                await mailbox[mailbox[self][2]] = EmptyMailbox; 
-                mailbox[mailbox[self][2]] := IF ProcessCanFail /\ \A proc \in Processes \ {self}: proc > self \* if process can fail and this is the smallest
-                                             THEN EmptyMailbox
-                                             ELSE <<AckRequestResource, self, local_timestamp>>;
+                await mailbox[mailbox[self].proc] = EmptyMailbox; 
+                mailbox[mailbox[self].proc] := IF ProcessCanFail /\ \A proc \in Processes \ {self}: proc > self \* if process can fail and this is the smallest
+                                                THEN EmptyMailbox
+                                                ELSE [ msg |-> AckRequestResource, proc |-> self, ts |-> local_timestamp];
 EMPTY_MAILBOX:
-                \* handle of the message is completed, release the message queue
+                \* handling of the message is completed, release the message queue
                 mailbox[self] := EmptyMailbox;
                 BumpTimestamp();
-            } or { \* Handle a release resource message
-                \* When process Pj receives a Pi releases resource
-                \* message, it removes any Tm:P~ requests resource message
-                \* from its request queue.
-                await mailbox[self][1] = ReleaseResource;
-                requests_queue := {req \in requests_queue : req[2] # mailbox[self][2]};
-                BumpTimestampO(mailbox[self][3]);
+            } or { 
+                (*********************
+                    3. Whenever Pi receives the AckRequestResource, it appends it to its local acknowledgments set.
+                **********************)
+                await mailbox[self].msg = AckRequestResource;
+                ack_request_resource := IF /\ \E el \in ack_request_resource : mailbox[self].ts > el.ts 
+                                           /\ mailbox[self].proc \notin {m.proc : m \in ack_request_resource} 
+                                        THEN ack_request_resource \union {mailbox[self]} 
+                                        ELSE ack_request_resource;
+                \*ack_request_resource := ack_request_resource \union {mailbox[self]};
+                BumpTimestampO(mailbox[self].ts);
                 mailbox[self] := EmptyMailbox;
-            } or { \* Handle a Release Resource Ownership
-                \* To release the resource, process P~ removes any
-                \* Tm:Pi requests resource message from its request queue
-                \* and sends a (timestamped) Pi releases resource message
-                \* to every other process.
+            } or {
+                (*********************
+                    4. To release the resource, process Pi removes any <<RequestsResource, Pi, Tm>> message from its request 
+                       queue and sends a timestamped Pi, ReleaseResource message to every other process.
+                **********************)
+                await mailbox[self].msg = ReleaseResource;
+                requests_queue := {req \in requests_queue : req.proc # mailbox[self].proc};
+                BumpTimestampO(mailbox[self].ts);
+                mailbox[self] := EmptyMailbox;
+            } or { 
+                (*********************
+                    5. When process Pj receives a Pi ReleaseResource message, it removes any <<RequestsResource, Pi, Tm>> 
+                       requests resource message from its request queue.
+                **********************)
                 await self \in resource_owner  /\ CanSendMessage(self);
-                \* If we're the resource owner it means we're at the top of the local queue, so it should work
+                \* If there is a resource owner, its request has to be at the top of the local queue, so this is safe
                 requests_queue := SeqToSet(Tail(SetToSortSeq(requests_queue, SortFunction))); 
                 BumpTimestamp();
-                mailbox := [p \in Processes |-> IF p = self THEN EmptyMailbox ELSE <<ReleaseResource, self, local_timestamp>>];
+                mailbox := [p \in Processes |-> IF p = self THEN EmptyMailbox ELSE [ msg |-> ReleaseResource, proc |-> self, ts |-> local_timestamp]];
                 resource_owner :=  resource_owner \ {self};
                 ack_request_resource := {};
-            } or { \* take owenrship if possible
+            } or { 
+                (*********************
+                    6. Process Pi is granted the resource when the following two conditions are satisfied: 
+                        (i) There is a <<RequestsResource, Pi, Tm>> in its request queue which is ordered before any other 
+                            request in its queue by the relation ⇒. (To define the relation " ⇒ " for messages, we identify a message
+                            with the event of sending it.).
+                        (ii) Pi has received a message from every other process timestamped later than Tm.
+                **********************)
                 await /\ Cardinality(requests_queue) > 0 
-                    /\ Head(SetToSortSeq(requests_queue, SortFunction))[2] = self
+                    /\ Head(SetToSortSeq(requests_queue, SortFunction)).proc = self
                     /\ Cardinality(ack_request_resource) = Cardinality(Processes)
                     \* doesn't make sense to take ownership again of this resource if we already own it
                     /\ self \notin resource_owner;
 
                 resource_owner := resource_owner \union {self};
-            } or { \* handle an AckRequestResource message
-                await mailbox[self][1] = AckRequestResource;
-                ack_request_resource := IF  /\ \E el \in ack_request_resource : mailbox[self][3] > el[3] 
-                                            /\ mailbox[self][2] \notin {m[2] : m \in ack_request_resource} 
-                                        THEN ack_request_resource \union {mailbox[self]} 
-                                        ELSE ack_request_resource;
-                BumpTimestampO(mailbox[self][3]);
-                mailbox[self] := EmptyMailbox;
             }
         }
     }
@@ -164,7 +181,7 @@ EMPTY_MAILBOX:
 } 
 
 *)
-\* BEGIN TRANSLATION (chksum(pcal) = "7c28162a" /\ chksum(tla) = "4d664f9f")
+\* BEGIN TRANSLATION (chksum(pcal) = "7c28162a" /\ chksum(tla) = "5aee13df")
 VARIABLES resource_owner, mailbox, pc
 
 (* define statement *)
@@ -178,23 +195,19 @@ CanSendMessage(myself) == \A p \in Processes : mailbox[p] = EmptyMailbox
 
 
 SortFunction(seq1, seq2) ==
-    IF seq1[3] > seq2[3]
+    IF seq1.ts > seq2.ts
     THEN FALSE
-    ELSE IF seq1[3] < seq2[3]
+    ELSE IF seq1.ts < seq2.ts
     THEN TRUE
-    ELSE IF seq1[2] > seq2[2]
+    ELSE IF seq1.proc > seq2.proc
     THEN FALSE
-    ELSE IF seq1[2] < seq2[2]
+    ELSE IF seq1.proc < seq2.proc
     THEN TRUE
     ELSE FALSE
 
 TypeLamportTimestamp(t) == t \in Nat /\ t <= MaxTimestamp
 
-
-TypeMailbox == \/ \A m \in DOMAIN mailbox : \/ mailbox[m] = EmptyMailbox
-                                            \/  /\ mailbox[m][1] \in Commands
-                                                /\ mailbox[m][2] \in Processes
-                                                /\ TypeLamportTimestamp(mailbox[m][3])
+TypeMailbox == \A m \in DOMAIN mailbox : mailbox[m] \in MessageType
 TypeResourceOwner == \A ro \in resource_owner: ro \in Processes
 
 
@@ -217,54 +230,53 @@ Init == (* Global variables *)
         /\ pc = [self \in ProcSet |-> "S"]
 
 S(self) == /\ pc[self] = "S"
-           /\ \/ /\   /\ Cardinality(resource_owner) = 0
-                    /\ CanSendMessage(self)
+           /\ \/ /\ /\ CanSendMessage(self)
                     /\ Cardinality(ack_request_resource[self]) = 0
                  /\ local_timestamp' = [local_timestamp EXCEPT ![self] = Min(local_timestamp[self] + 1, MaxTimestamp)]
-                 /\ requests_queue' = [requests_queue EXCEPT ![self] = requests_queue[self] \union {<<RequestResource, self, local_timestamp'[self]>>}]
-                 /\ mailbox' = [p \in Processes |-> IF p = self THEN EmptyMailbox ELSE <<RequestResource,self, local_timestamp'[self]>>]
-                 /\ ack_request_resource' = [ack_request_resource EXCEPT ![self] = {<<AckRequestResource, self, local_timestamp'[self]>>}]
+                 /\ requests_queue' = [requests_queue EXCEPT ![self] = requests_queue[self] \union {[ msg |-> RequestResource, proc |-> self, ts |-> local_timestamp'[self]]}]
+                 /\ mailbox' = [p \in Processes |-> IF p = self THEN EmptyMailbox ELSE [ msg |-> RequestResource, proc |-> self, ts |-> local_timestamp'[self]]]
+                 /\ ack_request_resource' = [ack_request_resource EXCEPT ![self] = {[ msg |-> AckRequestResource, proc |-> self, ts |-> local_timestamp'[self]]}]
                  /\ pc' = [pc EXCEPT ![self] = "S"]
                  /\ UNCHANGED resource_owner
-              \/ /\ mailbox[self][1] = RequestResource
+              \/ /\ mailbox[self].msg = RequestResource
                  /\ requests_queue' = [requests_queue EXCEPT ![self] = requests_queue[self] \union {mailbox[self]}]
-                 /\ local_timestamp' = [local_timestamp EXCEPT ![self] = Min(Max(local_timestamp[self], (mailbox[self][3])) + 1, MaxTimestamp)]
-                 /\ mailbox[mailbox[self][2]] = EmptyMailbox
-                 /\ mailbox' = [mailbox EXCEPT ![mailbox[self][2]] = IF ProcessCanFail /\ \A proc \in Processes \ {self}: proc > self
-                                                                     THEN EmptyMailbox
-                                                                     ELSE <<AckRequestResource, self, local_timestamp'[self]>>]
+                 /\ local_timestamp' = [local_timestamp EXCEPT ![self] = Min(Max(local_timestamp[self], (mailbox[self].ts)) + 1, MaxTimestamp)]
+                 /\ mailbox[mailbox[self].proc] = EmptyMailbox
+                 /\ mailbox' = [mailbox EXCEPT ![mailbox[self].proc] = IF ProcessCanFail /\ \A proc \in Processes \ {self}: proc > self
+                                                                        THEN EmptyMailbox
+                                                                        ELSE [ msg |-> AckRequestResource, proc |-> self, ts |-> local_timestamp'[self]]]
                  /\ pc' = [pc EXCEPT ![self] = "EMPTY_MAILBOX"]
                  /\ UNCHANGED <<resource_owner, ack_request_resource>>
-              \/ /\ mailbox[self][1] = ReleaseResource
-                 /\ requests_queue' = [requests_queue EXCEPT ![self] = {req \in requests_queue[self] : req[2] # mailbox[self][2]}]
-                 /\ local_timestamp' = [local_timestamp EXCEPT ![self] = Min(Max(local_timestamp[self], (mailbox[self][3])) + 1, MaxTimestamp)]
+              \/ /\ mailbox[self].msg = AckRequestResource
+                 /\ ack_request_resource' = [ack_request_resource EXCEPT ![self] = IF  /\ \E el \in ack_request_resource[self] : mailbox[self].ts > el.ts
+                                                                                       /\ mailbox[self].proc \notin {m.proc : m \in ack_request_resource[self]}
+                                                                                   THEN ack_request_resource[self] \union {mailbox[self]}
+                                                                                   ELSE ack_request_resource[self]]
+                 /\ local_timestamp' = [local_timestamp EXCEPT ![self] = Min(Max(local_timestamp[self], (mailbox[self].ts)) + 1, MaxTimestamp)]
+                 /\ mailbox' = [mailbox EXCEPT ![self] = EmptyMailbox]
+                 /\ pc' = [pc EXCEPT ![self] = "S"]
+                 /\ UNCHANGED <<resource_owner, requests_queue>>
+              \/ /\ mailbox[self].msg = ReleaseResource
+                 /\ requests_queue' = [requests_queue EXCEPT ![self] = {req \in requests_queue[self] : req.proc # mailbox[self].proc}]
+                 /\ local_timestamp' = [local_timestamp EXCEPT ![self] = Min(Max(local_timestamp[self], (mailbox[self].ts)) + 1, MaxTimestamp)]
                  /\ mailbox' = [mailbox EXCEPT ![self] = EmptyMailbox]
                  /\ pc' = [pc EXCEPT ![self] = "S"]
                  /\ UNCHANGED <<resource_owner, ack_request_resource>>
               \/ /\ self \in resource_owner  /\ CanSendMessage(self)
                  /\ requests_queue' = [requests_queue EXCEPT ![self] = SeqToSet(Tail(SetToSortSeq(requests_queue[self], SortFunction)))]
                  /\ local_timestamp' = [local_timestamp EXCEPT ![self] = Min(local_timestamp[self] + 1, MaxTimestamp)]
-                 /\ mailbox' = [p \in Processes |-> IF p = self THEN EmptyMailbox ELSE <<ReleaseResource, self, local_timestamp'[self]>>]
+                 /\ mailbox' = [p \in Processes |-> IF p = self THEN EmptyMailbox ELSE [ msg |-> ReleaseResource, proc |-> self, ts |-> local_timestamp'[self]]]
                  /\ resource_owner' = resource_owner \ {self}
                  /\ ack_request_resource' = [ack_request_resource EXCEPT ![self] = {}]
                  /\ pc' = [pc EXCEPT ![self] = "S"]
               \/ /\   /\ Cardinality(requests_queue[self]) > 0
-                    /\ Head(SetToSortSeq(requests_queue[self], SortFunction))[2] = self
+                    /\ Head(SetToSortSeq(requests_queue[self], SortFunction)).proc = self
                     /\ Cardinality(ack_request_resource[self]) = Cardinality(Processes)
                     
                     /\ self \notin resource_owner
                  /\ resource_owner' = (resource_owner \union {self})
                  /\ pc' = [pc EXCEPT ![self] = "S"]
                  /\ UNCHANGED <<mailbox, local_timestamp, ack_request_resource, requests_queue>>
-              \/ /\ mailbox[self][1] = AckRequestResource
-                 /\ ack_request_resource' = [ack_request_resource EXCEPT ![self] = IF  /\ \E el \in ack_request_resource[self] : mailbox[self][3] > el[3]
-                                                                                       /\ mailbox[self][2] \notin {m[2] : m \in ack_request_resource[self]}
-                                                                                   THEN ack_request_resource[self] \union {mailbox[self]}
-                                                                                   ELSE ack_request_resource[self]]
-                 /\ local_timestamp' = [local_timestamp EXCEPT ![self] = Min(Max(local_timestamp[self], (mailbox[self][3])) + 1, MaxTimestamp)]
-                 /\ mailbox' = [mailbox EXCEPT ![self] = EmptyMailbox]
-                 /\ pc' = [pc EXCEPT ![self] = "S"]
-                 /\ UNCHANGED <<resource_owner, requests_queue>>
 
 EMPTY_MAILBOX(self) == /\ pc[self] = "EMPTY_MAILBOX"
                        /\ mailbox' = [mailbox EXCEPT ![self] = EmptyMailbox]
@@ -286,9 +298,9 @@ Spec == /\ Init /\ [][Next]_vars
 TypeLocalTimestamp == \A proc \in Processes: /\ local_timestamp[proc] \in Nat
                                              /\ local_timestamp[proc] <= MaxTimestamp
 
-TypeAckRequestResource == \A proc \in Processes: \A message \in ack_request_resource[proc]: /\ message[1] = AckRequestResource
-                                                                                           /\ message[2] \in Processes
-                                                                                           /\ TypeLamportTimestamp(message[3])
+TypeAckRequestResource == \A proc \in Processes: \A message \in ack_request_resource[proc]: /\ message.msg = AckRequestResource
+                                                                                           /\ message.proc \in Processes
+                                                                                           /\ TypeLamportTimestamp(message.ts)
 
 TypeOk == /\ TypeMailbox
           /\ TypeResourceOwner

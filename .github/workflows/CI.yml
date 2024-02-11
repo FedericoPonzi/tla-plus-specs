@@ -1,0 +1,32 @@
+name: Check Specs & Metadata
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  validate:
+    name: Validate Manifest, Specs, & Models
+    runs-on: ubuntu-latest
+    env:
+      SCRIPT_DIR: .github/workflows
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Clone repo
+        uses: actions/checkout@v4
+      - name: Install Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: adopt
+          java-version: 17
+      - name: Download TLA⁺ dependencies
+        run: $SCRIPT_DIR/setup.sh
+      - name: Check models
+        run: $SCRIPT_DIR/wrapper.sh
+        
+

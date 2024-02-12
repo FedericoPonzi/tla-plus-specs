@@ -54,14 +54,10 @@ States == {StatesSleep, StatesWaitingLease, StatesDoingOperation, StatesRenewedL
     variables states = [x \in Workers |-> StatesWaitingLease];
     define {
         OnlyOneLeader == Cardinality({w \in DOMAIN (states): states[w] = StatesDoingOperation}) <= 1
-        TypeOk == \A w \in Workers: states[w] \in States
+        TypeOk == \A w \in Workers: states[w] \in States 
         Inv == /\ TypeOk
                /\ OnlyOneLeader
                \*/\ baitinv 
-    }
-
-    macro stateIs(s) {
-        states[self] = s
     }
 
     process (w \in Workers) {
@@ -69,32 +65,31 @@ W:
         while(TRUE) {
             either {
                 \* If lease is expired, renew
-                await stateIs(StatesWaitingLease)
+                await states[self] = StatesWaitingLease;
                 await ~\E w \in Workers : states[w] = StatesDoingOperation \/ states[w] = StatesRenewedLease;
                 states[self] := StatesRenewedLease;
             } or {
                 \* Leader goes to sleep before start operation
-                await stateIs(StatesRenewedLease);
+                await states[self] = StatesRenewedLease;
                 \* this state is like saying that lease is expired.
                 states[self] := StatesSleep;
             } or {
                 \* Leader start the operation
-                await stateIs(StatesRenewedLease) \/ stateIs(StatesSleep);
+                await states[self] = StatesRenewedLease \/ states[self] = StatesSleep;
                 states[self] := StatesDoingOperation;
             } or {
                 \* Leader has completed the operation, no goes through the renew lease phase.
-                await stateIs(StatesDoingOperation);
+                await states[self] = StatesDoingOperation;
                 states[self] := StatesWaitingLease;
             }
         }
     }
 }*)
-\* BEGIN TRANSLATION (chksum(pcal) = "92808600" /\ chksum(tla) = "8f5050cf")
+\* BEGIN TRANSLATION (chksum(pcal) = "a482c2a" /\ chksum(tla) = "8f5050cf")
 VARIABLE states
 
 (* define statement *)
 OnlyOneLeader == Cardinality({w \in DOMAIN (states): states[w] = StatesDoingOperation}) <= 1
-
 TypeOk == \A w \in Workers: states[w] \in States
 Inv == /\ TypeOk
        /\ OnlyOneLeader

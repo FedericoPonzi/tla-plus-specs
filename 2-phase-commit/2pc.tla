@@ -61,7 +61,7 @@ RM:
 
 }
 *)
-\* BEGIN TRANSLATION (chksum(pcal) = "3f73e87b" /\ chksum(tla) = "ad96144a")
+\* BEGIN TRANSLATION (chksum(pcal) = "c33de399" /\ chksum(tla) = "3f28490e")
 VARIABLES resourceManagerState, tmState, pc
 
 (* define statement *)
@@ -72,7 +72,7 @@ CanCommit == \A rm \in ResourceManagers :
 CanAbort == \A rm \in ResourceManagers :
                 resourceManagerState[rm] = StateAborted
 Inv == /\ \E rm1 \in ResourceManagers: resourceManagerState[rm1] \in {StateCommitted} => ~ \E rm2 \in ResourceManagers : resourceManagerState[rm2] \in {StateAborted}
-       /\ baitinv
+
 
 Terminate == \A rm \in ResourceManagers: resourceManagerState[rm] \in {StateCommitted, StateAborted}
 

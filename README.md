@@ -8,9 +8,11 @@ My TLA+ specifications, mostly written in Pluscal.
 * Modeling of the solution for the problem of Missionaries and Cannibals: https://github.com/FedericoPonzi/tla-plus-specs/tree/main/missionaries_and_cannibals_problem
 * I've started watching this talk "[Weeks of debugging can save you hours of TLA+](https://www.youtube.com/watch?v=wjsI0lTSjIo)", and thought it would be fun to stop it and try to find the bug myself in tla+: https://github.com/FedericoPonzi/tla-plus-specs/tree/main/weeks_of_debugging
 * Wolf, Goat and Cabbage is similar to the Missionaries and cannibals problem. A fun exercise to improve my tla+: https://github.com/FedericoPonzi/tla-plus-specs/tree/main/wolf_goat_cabbage
+* Chandy-lamport distributed snapshots algorithm: https://github.com/FedericoPonzi/tla-plus-specs/tree/main/chandy-lamport-distributed-snapshots
 
 ## Posts:
 I've also written some blog posts on TLA+:
 * [TLA+ is easy if you know how to abstract](https://blog.fponzi.me/2023-10-26-tla-plus-is-easy-if-you-know-how-to-abstract.html)
 * [Wolf, goat and cabbage problem](https://blog.fponzi.me/2023-10-30-wolf-goat-cabbage.html)
 * [Lamport clocks](https://blog.fponzi.me/2024-02-02-lamport-clocks.html)
+* [Distributed Snapshots: Chandy-Lamport protocol](https://blog.fponzi.me/2024-05-30-distributed-snapshots.html)
